@@ -25,6 +25,14 @@ body{
   font-family:var(--body);
   line-height:1.5;
   -webkit-font-smoothing:antialiased;
+  /* installed-app / notch safe areas on phones */
+  padding-left:env(safe-area-inset-left);
+  padding-right:env(safe-area-inset-right);
+}
+@media (max-width:480px){
+  main#app{padding:24px 14px 70px;}
+  .card{padding:18px;}
+  .topbar-inner{padding:12px 14px;}
 }
 a{color:inherit;text-decoration:none;}
 h1,h2,h3{font-family:var(--display);font-weight:600;margin:0 0 .4em;letter-spacing:.01em;}
@@ -228,6 +236,15 @@ input:focus,textarea:focus,select:focus{border-color:var(--amber);}
 table{width:100%;border-collapse:collapse;font-size:.88rem;}
 th,td{text-align:left;padding:10px 12px;border-bottom:1px solid var(--line);}
 th{color:var(--text-dim);font-weight:600;font-family:var(--mono);font-size:.76rem;text-transform:uppercase;letter-spacing:.05em;}
+.table-scroll{overflow-x:auto;-webkit-overflow-scrolling:touch;}
+.table-scroll table{min-width:480px;}
+
+/* ===== AI assist ===== */
+.ai-assist-card{
+  border-color:var(--amber);background:linear-gradient(180deg, rgba(255,138,61,.07), var(--surface));
+  margin-bottom:14px;
+}
+.ai-status{margin:10px 0 0;font-size:.82rem;color:var(--text-dim);min-height:1.2em;}
 
 .empty-state{
   border:1px dashed var(--line);border-radius:var(--radius);padding:50px 20px;text-align:center;color:var(--text-dim);

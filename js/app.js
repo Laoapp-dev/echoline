@@ -121,6 +121,218 @@ function makeRecognizer(){
   return rec;
 }
 
+/* ---------------------------- Free AI assist (vocabulary + questions) ----
+   Uses Puter.js (js.puter.com) — a free, keyless AI helper loaded in
+   index.html — so admins don't have to type vocabulary and questions by
+   hand. Everything here is optional sugar on top of the existing plain
+   textarea import forms: AI just pre-fills them for the admin to review
+   and edit before clicking Import / Add, so nothing about the data model
+   or the manual-entry flow changes. If the AI helper can't be reached
+   (offline, or the script is blocked), a small built-in keyword scan is
+   used instead so the buttons still do something useful.
+   ---------------------------------------------------------------------- */
+
+const AI_TRANSCRIPT_LIMIT = 4000; // keep prompts small & fast
+
+async function callFreeAI(prompt){
+  if(!window.puter || !window.puter.ai || typeof window.puter.ai.chat !== 'function'){
+    throw new Error('Free AI helper is not available right now (offline, or js.puter.com is blocked).');
+  }
+  const res = await window.puter.ai.chat(prompt);
+  if(typeof res === 'string') return res;
+  if(res && res.message && typeof res.message.content === 'string') return res.message.content;
+  if(res && res.message && Array.isArray(res.message.content)){
+    return res.message.content.map(c => c.text || '').join('\n');
+  }
+  if(res && typeof res.text === 'string') return res.text;
+  return JSON.stringify(res);
+}
+
+function extractJSON(text){
+  const candidates = ['[','{'].map(c => text.indexOf(c)).filter(i => i !== -1);
+  if(candidates.length === 0) throw new Error('AI response did not contain JSON.');
+  const start = Math.min(...candidates);
+  const closeChar = text[start] === '[' ? ']' : '}';
+  const end = text.lastIndexOf(closeChar);
+  if(end === -1 || end < start) throw new Error('AI response did not contain JSON.');
+  return JSON.parse(text.slice(start, end + 1));
+}
+
+async function aiExtractVocabulary(transcript){
+  const clipped = transcript.slice(0, AI_TRANSCRIPT_LIMIT);
+  const prompt = `You are helping an English teacher build a vocabulary list from a video transcript, for English learners.
+
+Read the transcript below and pick 6 to 10 of the most useful vocabulary words or short phrases for an intermediate learner. Skip very basic words (like "the", "is", "go", "good"). Prefer words or phrases that actually appear in the transcript.
+
+Transcript:
+"""
+${clipped}
+"""
+
+Reply with ONLY valid JSON — an array of objects — and nothing else. No markdown fences, no explanation, no text before or after.
+[{"word": "example", "meaning": "a short, simple one-sentence definition", "example": "a short example sentence using the word"}]`;
+
+  const text = await callFreeAI(prompt);
+  const data = extractJSON(text);
+  if(!Array.isArray(data)) throw new Error('Unexpected AI response shape.');
+  return data
+    .filter(v => v && v.word && v.meaning)
+    .map(v => ({
+      word: String(v.word).trim(),
+      meaning: String(v.meaning).trim(),
+      example: v.example ? String(v.example).trim() : '',
+    }));
+}
+
+async function aiGenerateQuestions(transcript, title){
+  const clipped = transcript.slice(0, AI_TRANSCRIPT_LIMIT);
+  const prompt = `You are helping an English teacher write speaking-practice questions from a video transcript, for English learners.
+
+Video title: "${title}"
+
+Read the transcript below and write 4 to 6 open-ended speaking questions about it. Mix simple questions (recall / main idea) with medium-difficulty questions (opinion / inference). A learner who watched or read this should be able to answer them out loud.
+
+Transcript:
+"""
+${clipped}
+"""
+
+Reply with ONLY a valid JSON array of strings and nothing else. No markdown fences, no explanation, no text before or after.
+["question 1", "question 2"]`;
+
+  const text = await callFreeAI(prompt);
+  const data = extractJSON(text);
+  if(!Array.isArray(data)) throw new Error('Unexpected AI response shape.');
+  return data.map(q => String(q).trim()).filter(Boolean);
+}
+
+// --- Offline fallback: a small keyword scan, used only if the free AI helper is unreachable ---
+
+const AI_FALLBACK_STOPWORDS = new Set([
+  'the','a','an','and','or','but','if','then','so','because','of','to','in','on','at','for','with',
+  'about','as','is','are','was','were','be','been','being','have','has','had','do','does','did',
+  'will','would','can','could','should','may','might','must','i','you','he','she','it','we','they',
+  'this','that','these','those','my','your','his','her','its','our','their','not','no','yes','okay',
+  'ok','well','just','really','very','get','got','go','going','went','say','says','said','like',
+  'also','more','some','any','all','one','two','into','out','up','down','over','under','than','from',
+  'there','here','what','when','where','why','how','who','which','them','us','me','us','been','now',
+]);
+
+function fallbackVocabFromTranscript(transcript){
+  const sentences = transcript.split(/\n+/).map(s => s.trim()).filter(Boolean);
+  const freq = {};
+  sentences.forEach(s => {
+    normalizeWords(s).forEach(w => {
+      if(w.length >= 5 && !AI_FALLBACK_STOPWORDS.has(w)) freq[w] = (freq[w] || 0) + 1;
+    });
+  });
+  const words = Object.keys(freq).sort((a,b) => freq[b]-freq[a]).slice(0, 8);
+  return words.map(w => ({
+    word: w,
+    meaning: '(quick offline scan — add a definition here)',
+    example: sentences.find(s => normalizeWords(s).includes(w)) || '',
+  }));
+}
+
+function fallbackQuestionsFromTranscript(title){
+  return [
+    `What is the main idea of "${title}"?`,
+    `What is one new word or phrase you learned from this video? What does it mean?`,
+    `Do you agree with what was said in the video? Why or why not?`,
+    `Summarize this video in two or three sentences, in your own words.`,
+    `How does this topic connect to your own life or experience?`,
+  ];
+}
+
+async function aiFillVocab(lessonId){
+  const db = loadDB();
+  const lesson = db.lessons.find(l => l.id === lessonId);
+  const statusEl = document.getElementById('ai-vocab-status');
+  const btn = document.getElementById('ai-vocab-btn');
+  if(!lesson.transcript || !lesson.transcript.trim()){
+    statusEl.textContent = 'Add a transcript above first — the AI reads that to find vocabulary.';
+    return;
+  }
+  btn.disabled = true;
+  statusEl.textContent = '✨ Thinking… reading the transcript…';
+  try{
+    const items = await aiExtractVocabulary(lesson.transcript);
+    if(items.length === 0) throw new Error('AI returned no usable words.');
+    fillTextareaLines('vocab-import', items.map(v => `${v.word} | ${v.meaning} | ${v.example}`));
+    statusEl.textContent = `Found ${items.length} words — review them below, then click Import vocabulary.`;
+  }catch(err){
+    console.error(err);
+    const fallback = fallbackVocabFromTranscript(lesson.transcript);
+    fillTextareaLines('vocab-import', fallback.map(v => `${v.word} | ${v.meaning} | ${v.example}`));
+    statusEl.textContent = `Free AI wasn't reachable, so here's a quick offline keyword scan instead (${fallback.length} words) — edit the meanings, then click Import vocabulary.`;
+  }finally{
+    btn.disabled = false;
+  }
+}
+
+async function aiFillQuestions(lessonId){
+  const db = loadDB();
+  const lesson = db.lessons.find(l => l.id === lessonId);
+  const statusEl = document.getElementById('ai-q-status');
+  const btn = document.getElementById('ai-q-btn');
+  if(!lesson.transcript || !lesson.transcript.trim()){
+    statusEl.textContent = 'Add a transcript above first — the AI reads that to write questions.';
+    return;
+  }
+  btn.disabled = true;
+  statusEl.textContent = '✨ Thinking… drafting questions…';
+  try{
+    const questions = await aiGenerateQuestions(lesson.transcript, lesson.title);
+    if(questions.length === 0) throw new Error('AI returned no usable questions.');
+    fillTextareaLines('question-import', questions);
+    statusEl.textContent = `Drafted ${questions.length} questions — review them below, then click Add questions.`;
+  }catch(err){
+    console.error(err);
+    const fallback = fallbackQuestionsFromTranscript(lesson.title);
+    fillTextareaLines('question-import', fallback);
+    statusEl.textContent = `Free AI wasn't reachable, so here are some general-purpose starter questions instead — edit as needed, then click Add questions.`;
+  }finally{
+    btn.disabled = false;
+  }
+}
+
+function fillTextareaLines(elementId, lines){
+  const ta = document.getElementById(elementId);
+  const existing = ta.value.trim();
+  ta.value = existing ? existing + '\n' + lines.join('\n') : lines.join('\n');
+}
+
+/* ---------------------------- PWA: install + offline shell --------------- */
+
+let deferredInstallPrompt = null;
+
+window.addEventListener('beforeinstallprompt', (e) => {
+  e.preventDefault();
+  deferredInstallPrompt = e;
+  renderNav(); // re-render so the Install button appears
+});
+window.addEventListener('appinstalled', () => {
+  deferredInstallPrompt = null;
+  renderNav();
+});
+
+function handleInstallClick(){
+  if(!deferredInstallPrompt) return;
+  deferredInstallPrompt.prompt();
+  deferredInstallPrompt.userChoice.finally(() => {
+    deferredInstallPrompt = null;
+    renderNav();
+  });
+}
+
+if('serviceWorker' in navigator){
+  window.addEventListener('load', () => {
+    navigator.serviceWorker.register('service-worker.js').catch(() => {
+      /* static hosting without HTTPS (e.g. plain file://) may reject this — app still works, just without offline caching */
+    });
+  });
+}
+
 /* ---------------------------- Router ------------------------------------ */
 
 window.addEventListener('hashchange', route);
@@ -165,11 +377,15 @@ function requireAuth(role){
 
 function renderNav(){
   const user = currentUser();
+  const installBtn = deferredInstallPrompt
+    ? `<button class="btn secondary small" onclick="handleInstallClick()">⬇ Install app</button>`
+    : '';
   if(!user){
-    nav.innerHTML = `<a href="#/login">Log in</a><a class="btn small" href="#/signup">Sign up</a>`;
+    nav.innerHTML = `${installBtn}<a href="#/login">Log in</a><a class="btn small" href="#/signup">Sign up</a>`;
     return;
   }
   nav.innerHTML = `
+    ${installBtn}
     <a href="#/lessons">Lessons</a>
     ${user.role==='admin' ? '<a href="#/admin">Admin</a>' : ''}
     <span class="tag">${escapeHtml(user.username)}${user.role==='admin' ? ' · admin' : ''}</span>
@@ -595,7 +811,7 @@ function renderAdmin(){
       <a class="btn" href="#/admin/new">+ Add YouTube lesson</a>
     </div>
     ${lessons.length===0 ? `<div class="empty-state"><h3>No lessons yet</h3><p>Add your first YouTube lesson to get started.</p></div>` : `
-    <table>
+    <div class="table-scroll"><table>
       <thead><tr><th>Title</th><th>Video</th><th>Vocab</th><th>Questions</th><th></th></tr></thead>
       <tbody>
         ${lessons.map(l => `
@@ -611,7 +827,7 @@ function renderAdmin(){
           </tr>
         `).join('')}
       </tbody>
-    </table>`}
+    </table></div>`}
   `;
 }
 
@@ -697,6 +913,11 @@ function renderAdminLessonWorkspace(lessonId){
 
     <div class="divider"></div>
     <h3>Vocabulary (${vocab.length})</h3>
+    <div class="card ai-assist-card">
+      <p style="margin:0 0 12px;color:var(--text-dim);">✨ <strong style="color:var(--text);">Free AI assist</strong> — scans this lesson's transcript, picks out the standout vocabulary, and drafts a meaning + example sentence for each word.</p>
+      <button class="btn secondary small" id="ai-vocab-btn" onclick="aiFillVocab('${lesson.id}')">🤖 Auto-detect vocabulary</button>
+      <p id="ai-vocab-status" class="ai-status"></p>
+    </div>
     <div class="grid cols-2">
       <div class="card">
         <p style="color:var(--text-dim);margin-top:0;">Import format: one word per line — <span class="badge">word | meaning | example</span></p>
@@ -708,17 +929,22 @@ budget | a plan for spending money | We need to stick to our budget."></textarea
       </div>
       <div class="card">
         ${vocab.length===0 ? '<p style="color:var(--text-dim);">No vocabulary yet.</p>' : `
-        <table>
+        <div class="table-scroll"><table>
           <thead><tr><th>Word</th><th>Meaning</th><th></th></tr></thead>
           <tbody>
             ${vocab.map(v=>`<tr><td>${escapeHtml(v.word)}</td><td>${escapeHtml(v.meaning)}</td><td><button class="btn danger small" onclick="handleDeleteVocab('${v.id}','${lesson.id}')">Delete</button></td></tr>`).join('')}
           </tbody>
-        </table>`}
+        </table></div>`}
       </div>
     </div>
 
     <div class="divider"></div>
     <h3>Speaking questions (${questions.length})</h3>
+    <div class="card ai-assist-card">
+      <p style="margin:0 0 12px;color:var(--text-dim);">✨ <strong style="color:var(--text);">Free AI assist</strong> — reads this lesson's transcript and drafts a few simple-to-medium speaking questions based on it.</p>
+      <button class="btn secondary small" id="ai-q-btn" onclick="aiFillQuestions('${lesson.id}')">🤖 Auto-generate questions</button>
+      <p id="ai-q-status" class="ai-status"></p>
+    </div>
     <div class="grid cols-2">
       <div class="card">
         <p style="color:var(--text-dim);margin-top:0;">One question per line.</p>
@@ -730,11 +956,11 @@ Do you agree with the speaker? Why or why not?"></textarea>
       </div>
       <div class="card">
         ${questions.length===0 ? '<p style="color:var(--text-dim);">No questions yet.</p>' : `
-        <table>
+        <div class="table-scroll"><table>
           <tbody>
             ${questions.map(q=>`<tr><td>${escapeHtml(q.text)}</td><td><button class="btn danger small" onclick="handleDeleteQuestion('${q.id}','${lesson.id}')">Delete</button></td></tr>`).join('')}
           </tbody>
-        </table>`}
+        </table></div>`}
       </div>
     </div>
   `;
