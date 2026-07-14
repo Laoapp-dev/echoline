@@ -55,7 +55,49 @@ be reached (offline, or the script is blocked by a strict ad-blocker/firewall),
 both buttons automatically fall back to a small built-in keyword scan so
 they still produce a useful starting draft.
 
-## Install on a phone (or desktop) like an app
+## Bulk-add videos (no API key needed)
+
+**Admin → + Add multiple videos** lets you paste several YouTube links at
+once (one per line). EchoLine looks up each video's real title for free via
+YouTube's public oEmbed endpoint — no API key required — and creates one
+lesson per link with an empty transcript for you to fill in.
+
+A playlist link itself (`.../playlist?list=...`) can't be expanded into its
+individual videos this way — that requires Google's paid/keyed YouTube Data
+API, which this app deliberately avoids to stay a free, key-free static
+site. Instead: open the playlist on YouTube, copy each video's own link, and
+paste that whole batch into the bulk-add box.
+
+## Cloud sync (push lessons to every device)
+
+By default, lesson content still only lives in whichever browser created
+it. **Admin → ☁ Cloud sync** turns on a small, free, key-free shared JSON
+store (via jsonblob.com) so lessons, vocabulary, and speaking questions
+reach every learner, on every device — accounts and personal progress stay
+local to each device, same as before.
+
+Setup (one time, per deployment):
+
+1. Go to **Admin → ☁ Cloud sync → Create a shared store**. This creates a
+   free store pre-loaded with whatever lessons already exist on this device.
+2. It shows you a `blobId` value — open `sync-config.json` in your deployed
+   files, paste that value in, save, and redeploy (push to GitHub, re-drag
+   into Netlify, etc.).
+3. From then on, every device that loads the app reads `sync-config.json`,
+   finds the same store, and pulls the latest lessons on load (and again
+   when opening the Lessons page, if more than ~15 seconds have passed).
+   Any admin change (add/edit/delete lesson, vocab, or question) is pushed
+   to the store automatically.
+
+This is a "syncs on refresh" model, not instant real-time push — a learner
+who's mid-session won't see a brand-new lesson appear without reloading or
+re-opening the Lessons page, but any refresh afterwards will have it. Use
+**Admin → ☁ Cloud sync → Push / Pull** buttons any time to sync on demand.
+
+To turn cloud sync back off, clear the `blobId` in `sync-config.json` and
+redeploy — the app falls back to local-only storage exactly as before.
+
+
 
 EchoLine is an installable Progressive Web App:
 
@@ -144,6 +186,13 @@ site like this.
   is unaffected either way. AI-drafted meanings/questions can occasionally be
   imperfect, so review them before importing, same as you would any
   auto-generated content.
+- **Cloud sync depends on a third-party free service** (jsonblob.com) too.
+  It's free and needs no signup or key, but treat the store like a shared
+  link: anyone who has the `blobId` can read and overwrite it, so don't rely
+  on it for anything sensitive — it's meant for lesson content only. If the
+  service is ever down or the store is deleted, cloud sync simply stops
+  updating until a new store is created; each device's local copy keeps
+  working in the meantime.
 
 ## Customizing
 

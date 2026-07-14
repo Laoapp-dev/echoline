@@ -46,6 +46,114 @@ function progressFor(db, username){
   return db.progress[username];
 }
 
+/* ---------------------------- Cloud sync (shared content) ---------------
+   Static hosting has no server of its own, so "push lessons to every
+   device" is done through a small free JSON store (jsonblob.com — no
+   signup, no API key). Only LESSON CONTENT (lessons, vocab, questions) is
+   shared this way; accounts and personal progress stay local to each
+   device/browser, same as before.
+
+   How it's wired up:
+   - sync-config.json (same-origin file, ships with the deployed app) holds
+     the shared store's ID. Empty = cloud sync is off (default, so existing
+     sites keep working unchanged until an admin turns it on).
+   - Every device reads that file on load, so everyone points at the same
+     store without needing any per-browser setup.
+   - Admin → Cloud sync creates the store once, then shows the admin the
+     one-time sync-config.json edit + redeploy needed to switch it on for
+     everyone.
+   - After that, any admin change (add/edit/delete lesson, vocab, question)
+     is pushed to the store. Learners pull the latest copy whenever they
+     load the app or open the Lessons page — not instant/real-time, but
+     shows up on refresh, on any device.
+   ---------------------------------------------------------------------- */
+
+const SYNC_CONFIG_URL = './sync-config.json';
+const JSONBLOB_BASE = 'https://jsonblob.com/api/jsonBlob';
+const SYNC_MIN_INTERVAL_MS = 15000; // don't re-pull more than once per 15s from navigation alone
+
+let syncConfig = { blobId: '' };
+let lastSyncedAt = null;
+let syncInFlight = false;
+
+async function loadSyncConfig(){
+  try{
+    const res = await fetch(SYNC_CONFIG_URL, { cache: 'no-store' });
+    if(!res.ok) throw new Error('sync-config.json not found');
+    const data = await res.json();
+    syncConfig.blobId = (data && data.blobId) ? String(data.blobId).trim() : '';
+  }catch(_err){
+    syncConfig.blobId = '';
+  }
+  return syncConfig;
+}
+
+function cloudSyncEnabled(){ return !!syncConfig.blobId; }
+
+async function pullCloudContent(){
+  if(!cloudSyncEnabled()) return false;
+  try{
+    const res = await fetch(`${JSONBLOB_BASE}/${syncConfig.blobId}`, { cache: 'no-store' });
+    if(!res.ok) throw new Error('Cloud store returned an error.');
+    const cloud = await res.json();
+    const db = loadDB();
+    db.lessons = Array.isArray(cloud.lessons) ? cloud.lessons : [];
+    db.vocab = Array.isArray(cloud.vocab) ? cloud.vocab : [];
+    db.questions = Array.isArray(cloud.questions) ? cloud.questions : [];
+    saveDB(db);
+    lastSyncedAt = Date.now();
+    return true;
+  }catch(err){
+    console.error('Cloud pull failed:', err);
+    return false;
+  }
+}
+
+async function pushCloudContent(){
+  if(!cloudSyncEnabled()) return false;
+  try{
+    const db = loadDB();
+    const payload = { lessons: db.lessons, vocab: db.vocab, questions: db.questions, updatedAt: Date.now() };
+    const res = await fetch(`${JSONBLOB_BASE}/${syncConfig.blobId}`, {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(payload),
+    });
+    if(!res.ok) throw new Error('Cloud store rejected the update.');
+    lastSyncedAt = Date.now();
+    return true;
+  }catch(err){
+    console.error('Cloud push failed:', err);
+    return false;
+  }
+}
+
+async function createCloudStore(){
+  const db = loadDB();
+  const payload = { lessons: db.lessons, vocab: db.vocab, questions: db.questions, updatedAt: Date.now() };
+  const res = await fetch(JSONBLOB_BASE, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(payload),
+  });
+  if(!res.ok) throw new Error('Could not create a shared store — check your connection and try again.');
+  const location = res.headers.get('Location');
+  if(!location) throw new Error('The store was created, but no ID came back — please try again.');
+  return location.split('/').pop();
+}
+
+// Called from route() for learner-facing pages, so content quietly refreshes on navigation too
+function maybeResyncThenRerender(){
+  if(!cloudSyncEnabled()) return;
+  if(lastSyncedAt && (Date.now() - lastSyncedAt) < SYNC_MIN_INTERVAL_MS) return;
+  if(syncInFlight) return;
+  syncInFlight = true;
+  pullCloudContent().finally(() => {
+    syncInFlight = false;
+    route();
+  });
+}
+
 /* ---------------------------- Utilities -------------------------------- */
 
 function uid(){ return Math.random().toString(36).slice(2,10) + Date.now().toString(36).slice(-4); }
@@ -336,7 +444,13 @@ if('serviceWorker' in navigator){
 /* ---------------------------- Router ------------------------------------ */
 
 window.addEventListener('hashchange', route);
-window.addEventListener('DOMContentLoaded', () => { loadDB(); route(); });
+window.addEventListener('DOMContentLoaded', () => {
+  loadDB();
+  route();
+  loadSyncConfig().then(() => {
+    if(cloudSyncEnabled()) pullCloudContent().then(() => route());
+  });
+});
 
 function go(hash){ location.hash = hash; }
 
@@ -346,12 +460,12 @@ function route(){
   const parts = hash.split('/').filter(Boolean);
   const user = currentUser();
 
-  if(parts.length === 0) return renderHome();
+  if(parts.length === 0){ maybeResyncThenRerender(); return renderHome(); }
   if(parts[0]==='login') return renderLogin();
   if(parts[0]==='signup') return renderSignup();
 
-  if(parts[0]==='lessons') return requireAuth() && renderLessons();
-  if(parts[0]==='lesson' && parts[1]) return requireAuth() && renderLessonDetail(parts[1]);
+  if(parts[0]==='lessons'){ maybeResyncThenRerender(); return requireAuth() && renderLessons(); }
+  if(parts[0]==='lesson' && parts[1]){ maybeResyncThenRerender(); return requireAuth() && renderLessonDetail(parts[1]); }
 
   if(parts[0]==='practice' && parts[1]==='shadow' && parts[2]) return requireAuth() && renderShadowPractice(parts[2]);
   if(parts[0]==='practice' && parts[1]==='vocab' && parts[2]) return requireAuth() && renderVocabPractice(parts[2]);
@@ -359,6 +473,8 @@ function route(){
 
   if(parts[0]==='admin' && !parts[1]) return requireAuth('admin') && renderAdmin();
   if(parts[0]==='admin' && parts[1]==='new') return requireAuth('admin') && renderAdminLessonForm();
+  if(parts[0]==='admin' && parts[1]==='bulk') return requireAuth('admin') && renderAdminBulkAdd();
+  if(parts[0]==='admin' && parts[1]==='sync') return requireAuth('admin') && renderAdminSync();
   if(parts[0]==='admin' && parts[1]==='lesson' && parts[2]) return requireAuth('admin') && renderAdminLessonWorkspace(parts[2]);
 
   app.innerHTML = `<div class="empty-state"><h3>Page not found</h3><p>That view doesn't exist.</p></div>`;
@@ -499,6 +615,7 @@ function renderLessons(){
   app.innerHTML = `
     <div class="section-title">
       <h1>Lessons</h1>
+      ${cloudSyncEnabled() ? '<span class="badge">☁ shared across devices</span>' : ''}
     </div>
     ${lessons.length===0 ? `<div class="empty-state"><h3>No lessons yet</h3><p>Ask an admin to add the first YouTube lesson.</p></div>` : `
     <div class="grid cols-3">
@@ -808,7 +925,11 @@ function renderAdmin(){
   app.innerHTML = `
     <div class="section-title">
       <h1>Admin</h1>
-      <a class="btn" href="#/admin/new">+ Add YouTube lesson</a>
+      <div style="display:flex;gap:10px;flex-wrap:wrap;">
+        <a class="btn" href="#/admin/new">+ Add YouTube lesson</a>
+        <a class="btn secondary" href="#/admin/bulk">+ Add multiple videos</a>
+        <a class="btn secondary" href="#/admin/sync">☁ Cloud sync ${cloudSyncEnabled() ? '· on' : '· off'}</a>
+      </div>
     </div>
     ${lessons.length===0 ? `<div class="empty-state"><h3>No lessons yet</h3><p>Add your first YouTube lesson to get started.</p></div>` : `
     <div class="table-scroll"><table>
@@ -867,6 +988,7 @@ function handleAddLesson(e){
   const lesson = {id: uid(), title, youtubeId, description: desc, transcript, createdAt: Date.now()};
   db.lessons.push(lesson);
   saveDB(db);
+  pushCloudContent();
   go('#/admin/lesson/'+lesson.id);
   return false;
 }
@@ -878,6 +1000,7 @@ function handleDeleteLesson(id){
   db.vocab = db.vocab.filter(v=>v.lessonId!==id);
   db.questions = db.questions.filter(q=>q.lessonId!==id);
   saveDB(db);
+  pushCloudContent();
   renderAdmin();
 }
 
@@ -980,6 +1103,7 @@ function handleUpdateLesson(e, lessonId){
   lesson.description = document.getElementById('e-desc').value.trim();
   lesson.transcript = document.getElementById('e-transcript').value.trim();
   saveDB(db);
+  pushCloudContent();
   renderAdminLessonWorkspace(lessonId);
   return false;
 }
@@ -994,6 +1118,7 @@ function handleImportVocab(e, lessonId){
     if(word && meaning) db.vocab.push({id: uid(), lessonId, word, meaning, example: example||''});
   });
   saveDB(db);
+  pushCloudContent();
   renderAdminLessonWorkspace(lessonId);
   return false;
 }
@@ -1002,6 +1127,7 @@ function handleDeleteVocab(id, lessonId){
   const db = loadDB();
   db.vocab = db.vocab.filter(v=>v.id!==id);
   saveDB(db);
+  pushCloudContent();
   renderAdminLessonWorkspace(lessonId);
 }
 
@@ -1012,6 +1138,7 @@ function handleAddQuestions(e, lessonId){
   const db = loadDB();
   lines.forEach(text => db.questions.push({id: uid(), lessonId, text}));
   saveDB(db);
+  pushCloudContent();
   renderAdminLessonWorkspace(lessonId);
   return false;
 }
@@ -1020,5 +1147,148 @@ function handleDeleteQuestion(id, lessonId){
   const db = loadDB();
   db.questions = db.questions.filter(q=>q.id!==id);
   saveDB(db);
+  pushCloudContent();
   renderAdminLessonWorkspace(lessonId);
+}
+
+/* ---------------------------- Admin: bulk add videos -------------------------- */
+
+function renderAdminBulkAdd(){
+  app.innerHTML = `
+    <a href="#/admin" class="btn ghost small">&larr; Admin</a>
+    <div class="section-title" style="margin-top:14px;"><h1>Add multiple videos at once</h1></div>
+    <div class="card" style="max-width:680px;">
+      <p style="color:var(--text-dim);margin-top:0;">Paste one YouTube video link per line. EchoLine looks up each video's real title automatically (via YouTube's free public oEmbed lookup — no API key needed) and creates one lesson per link, with an empty transcript for you to fill in afterwards.</p>
+      <p style="color:var(--text-dim);font-size:.85rem;">A <em>playlist</em> link (the kind with <span class="badge">list=</span> and no specific video) can't be expanded into its videos without a paid/keyed API — open the playlist on YouTube and paste each video's own link here instead.</p>
+      <form onsubmit="return handleBulkAddLessons(event)">
+        <textarea id="bulk-urls" rows="8" placeholder="https://www.youtube.com/watch?v=...
+https://youtu.be/...
+https://www.youtube.com/watch?v=..."></textarea>
+        <button class="btn" type="submit">Add videos</button>
+      </form>
+      <div id="bulk-status" style="margin-top:16px;color:var(--text-dim);font-size:.9rem;line-height:1.6;"></div>
+    </div>
+  `;
+}
+
+async function fetchYouTubeTitle(videoId){
+  const res = await fetch(`https://www.youtube.com/oembed?format=json&url=${encodeURIComponent('https://www.youtube.com/watch?v='+videoId)}`);
+  if(!res.ok) throw new Error('oEmbed lookup failed');
+  const data = await res.json();
+  return data && data.title ? data.title : null;
+}
+
+async function handleBulkAddLessons(e){
+  e.preventDefault();
+  const ta = document.getElementById('bulk-urls');
+  const statusEl = document.getElementById('bulk-status');
+  const lines = ta.value.split('\n').map(l=>l.trim()).filter(Boolean);
+  if(lines.length===0) return false;
+
+  statusEl.textContent = `Looking up ${lines.length} video${lines.length===1?'':'s'}…`;
+
+  const db = loadDB();
+  const existingIds = new Set(db.lessons.map(l=>l.youtubeId));
+  const toAdd = [];
+  const skipped = [];
+
+  lines.forEach(line => {
+    const youtubeId = extractYouTubeId(line);
+    if(!youtubeId){
+      const isPlaylist = /[?&]list=/.test(line);
+      skipped.push(`${line} — ${isPlaylist ? "that's a playlist link, not a single video — paste each video's own link instead" : 'not a recognizable YouTube video link'}`);
+      return;
+    }
+    if(existingIds.has(youtubeId) || toAdd.some(x=>x.youtubeId===youtubeId)){
+      skipped.push(`${line} — already added`);
+      return;
+    }
+    toAdd.push({youtubeId});
+  });
+
+  const newLessons = await Promise.all(toAdd.map(async item => {
+    let title = 'Untitled video (edit the title)';
+    try{
+      const fetched = await fetchYouTubeTitle(item.youtubeId);
+      if(fetched) title = fetched;
+    }catch(_err){ /* keep default title — admin can rename it */ }
+    return {id: uid(), title, youtubeId: item.youtubeId, description: '', transcript: '', createdAt: Date.now()};
+  }));
+
+  newLessons.forEach(lesson => db.lessons.push(lesson));
+  saveDB(db);
+  pushCloudContent();
+
+  statusEl.innerHTML =
+    `Added ${newLessons.length} video${newLessons.length===1?'':'s'}.` +
+    (skipped.length ? `<br><br>Skipped ${skipped.length}:<br>` + skipped.map(escapeHtml).join('<br>') : '') +
+    (newLessons.length ? `<br><br><a href="#/admin" style="color:var(--amber-hi);">Go to Admin to add transcripts, vocabulary &amp; questions &rarr;</a>` : '');
+
+  ta.value = '';
+  return false;
+}
+
+/* ---------------------------- Admin: cloud sync -------------------------- */
+
+function renderAdminSync(){
+  app.innerHTML = `
+    <a href="#/admin" class="btn ghost small">&larr; Admin</a>
+    <div class="section-title" style="margin-top:14px;"><h1>Cloud sync</h1></div>
+    <div class="card" style="max-width:660px;">
+      ${cloudSyncEnabled() ? `
+        <p style="margin-top:0;"><span class="score-pill good">Cloud sync is ON</span></p>
+        <p style="color:var(--text-dim);">Lessons, vocabulary, and speaking questions saved here are shared with every learner on every device, through a small free JSON store. Accounts and personal progress stay local to each device, same as before.</p>
+        <div style="display:flex;gap:10px;flex-wrap:wrap;margin-top:16px;">
+          <button class="btn small" onclick="handlePushCloud()">⬆ Push my local content to the cloud</button>
+          <button class="btn secondary small" onclick="handlePullCloud()">⬇ Pull latest from the cloud</button>
+        </div>
+        <p id="sync-status" class="ai-status"></p>
+        <p style="color:var(--text-dim);font-size:.82rem;margin-top:18px;">To turn cloud sync off, clear the <span class="badge">blobId</span> value in <span class="badge">sync-config.json</span> and redeploy.</p>
+      ` : `
+        <p style="margin-top:0;"><span class="score-pill low">Cloud sync is OFF</span></p>
+        <p style="color:var(--text-dim);">Right now, lessons only live in this browser's storage — learners on other devices or browsers won't see them. Click below to create a free shared store (no signup), then do one small one-time file edit to switch it on for everyone.</p>
+        <button class="btn" id="create-store-btn" onclick="handleCreateCloudStore()">☁ Create a shared store</button>
+        <div id="sync-setup-result" style="margin-top:18px;"></div>
+      `}
+    </div>
+  `;
+}
+
+async function handleCreateCloudStore(){
+  const btn = document.getElementById('create-store-btn');
+  const resultEl = document.getElementById('sync-setup-result');
+  if(btn) btn.disabled = true;
+  resultEl.innerHTML = toast('Creating a free shared store…', 'info');
+  try{
+    const id = await createCloudStore();
+    resultEl.innerHTML = `
+      <div class="alert success">Store created! One last step to switch cloud sync on for everyone:</div>
+      <p style="color:var(--text-dim);">Open <span class="badge">sync-config.json</span> in your deployed files, set it to the value below, save, and redeploy (push to GitHub, re-drag the folder into Netlify, etc.). From then on, every learner's browser will read lessons from this same shared store.</p>
+      <div class="transcript-box" style="user-select:all;">{
+  "blobId": "${id}"
+}</div>
+      <p style="color:var(--text-dim);font-size:.82rem;margin-top:10px;">Your current lessons, vocabulary, and questions on this device were already copied into the new store, so nothing is lost once it's switched on.</p>
+    `;
+  }catch(err){
+    resultEl.innerHTML = toast(err.message || 'Could not create a shared store — check your connection and try again.', 'error');
+  }finally{
+    if(btn) btn.disabled = false;
+  }
+}
+
+async function handlePushCloud(){
+  const statusEl = document.getElementById('sync-status');
+  statusEl.textContent = '⬆ Pushing…';
+  const ok = await pushCloudContent();
+  statusEl.textContent = ok
+    ? 'Pushed just now. Other devices will get this the next time they open or refresh the app.'
+    : 'Could not reach the cloud store — check your connection and try again.';
+}
+
+async function handlePullCloud(){
+  const statusEl = document.getElementById('sync-status');
+  statusEl.textContent = '⬇ Pulling…';
+  const ok = await pullCloudContent();
+  statusEl.textContent = ok ? 'Pulled the latest shared content just now.' : 'Could not reach the cloud store — check your connection and try again.';
+  if(ok) renderAdminSync();
 }
