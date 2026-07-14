@@ -46,55 +46,132 @@ function progressFor(db, username){
   return db.progress[username];
 }
 
-/* ---------------------------- Cloud sync (shared content) ---------------
+/* ---------------------------- Cloud sync (shared content, via GitHub) ----
    Static hosting has no server of its own, so "push lessons to every
-   device" is done through a small free JSON store (jsonblob.com — no
-   signup, no API key). Only LESSON CONTENT (lessons, vocab, questions) is
-   shared this way; accounts and personal progress stay local to each
-   device/browser, same as before.
+   device" is done by having the admin commit a small JSON data file
+   straight into the site's own GitHub repo — the same repo GitHub Pages
+   (or wherever it's hosted) already serves from. Two GitHub endpoints make
+   this possible entirely from the browser, no server of ours required:
+   - api.github.com (the REST API) explicitly supports CORS, so the app can
+     create/update that file directly via an authenticated commit.
+   - raw.githubusercontent.com explicitly supports CORS too, and serves
+     file contents straight from the repo (not from a Pages build), so a
+     push shows up for readers within moments — no redeploy step needed.
+
+   (Earlier versions of this used jsonblob.com, then jsonbin.io. jsonblob
+   turned out not to support CORS at all — every request silently failed.
+   jsonbin.io worked but needed a separate account/service; going straight
+   to GitHub means the "shared store" is the same repo the admin already
+   owns and deploys from.)
+
+   Only LESSON CONTENT (lessons, vocab, questions) is shared this way;
+   accounts and personal progress stay local to each device/browser.
 
    How it's wired up:
-   - sync-config.json (same-origin file, ships with the deployed app) holds
-     the shared store's ID. Empty = cloud sync is off (default, so existing
-     sites keep working unchanged until an admin turns it on).
-   - Every device reads that file on load, so everyone points at the same
-     store without needing any per-browser setup.
-   - Admin → Cloud sync creates the store once, then shows the admin the
-     one-time sync-config.json edit + redeploy needed to switch it on for
-     everyone.
-   - After that, any admin change (add/edit/delete lesson, vocab, question)
-     is pushed to the store. Learners pull the latest copy whenever they
-     load the app or open the Lessons page — not instant/real-time, but
-     shows up on refresh, on any device.
+   - Reading needs no token at all: any device fetches the raw JSON file
+     from raw.githubusercontent.com. The repo owner/name is auto-detected
+     from the site's own URL when it's a standard GitHub Pages address
+     (https://{owner}.github.io/ or https://{owner}.github.io/{repo}/); for
+     anything else (a custom domain, or data kept in a different repo),
+     data-config.json (same-origin file shipped with the app) can specify
+     {owner, repo, branch, path} explicitly.
+   - Writing needs a GitHub Personal Access Token, scoped to just this repo
+     with Contents: Read & write. Only the admin's own browser ever stores
+     one (in localStorage) — it's never committed anywhere, and learners
+     are never shown a token field at all, so they can only ever pull.
+   - After setup, any admin change (add/edit/delete lesson, vocab,
+     question) is pushed with a real commit. Learners pull the latest copy
+     whenever they load the app or open the Lessons page — not
+     instant/real-time, but shows up on refresh, on any device, usually
+     within moments (occasionally a few minutes, due to GitHub's CDN cache
+     on raw file reads).
    ---------------------------------------------------------------------- */
 
-const SYNC_CONFIG_URL = './sync-config.json';
-const JSONBLOB_BASE = 'https://jsonblob.com/api/jsonBlob';
+const DATA_CONFIG_URL = './data-config.json';
+const GITHUB_API_BASE = 'https://api.github.com';
+const GITHUB_PAT_STORAGE = 'echoline_github_pat_v1';
+const GITHUB_REPO_STORAGE = 'echoline_github_repo_v1';
 const SYNC_MIN_INTERVAL_MS = 15000; // don't re-pull more than once per 15s from navigation alone
 
-let syncConfig = { blobId: '' };
+let repoConfig = null; // resolved {owner, repo, branch, path} used for reading (all devices)
 let lastSyncedAt = null;
 let syncInFlight = false;
 
-async function loadSyncConfig(){
-  try{
-    const res = await fetch(SYNC_CONFIG_URL, { cache: 'no-store' });
-    if(!res.ok) throw new Error('sync-config.json not found');
-    const data = await res.json();
-    syncConfig.blobId = (data && data.blobId) ? String(data.blobId).trim() : '';
-  }catch(_err){
-    syncConfig.blobId = '';
-  }
-  return syncConfig;
+// Works for the common case: a site served at https://{owner}.github.io/
+// (user/org page) or https://{owner}.github.io/{repo}/ (project page).
+function detectRepoFromLocation(){
+  const m = location.hostname.match(/^([^.]+)\.github\.io$/i);
+  if(!m) return null;
+  const owner = m[1];
+  const parts = location.pathname.split('/').filter(Boolean);
+  const repo = parts.length > 0 ? parts[0] : `${owner}.github.io`;
+  return { owner, repo, branch: 'main', path: 'data/lessons.json' };
 }
 
-function cloudSyncEnabled(){ return !!syncConfig.blobId; }
+async function resolveRepoConfig(){
+  try{
+    const res = await fetch(DATA_CONFIG_URL, { cache: 'no-store' });
+    if(res.ok){
+      const data = await res.json();
+      if(data && data.owner && data.repo){
+        repoConfig = { owner: data.owner, repo: data.repo, branch: data.branch || 'main', path: data.path || 'data/lessons.json' };
+        return repoConfig;
+      }
+    }
+  }catch(_err){ /* fall through to auto-detect */ }
+  repoConfig = detectRepoFromLocation();
+  return repoConfig;
+}
+
+function cloudSyncEnabled(){ return !!(repoConfig && repoConfig.owner && repoConfig.repo); }
+
+function getGithubPat(){ return localStorage.getItem(GITHUB_PAT_STORAGE) || ''; }
+function setGithubPat(v){
+  if(v) localStorage.setItem(GITHUB_PAT_STORAGE, v);
+  else localStorage.removeItem(GITHUB_PAT_STORAGE);
+}
+
+function getGithubRepoSettings(){
+  const raw = localStorage.getItem(GITHUB_REPO_STORAGE);
+  if(raw){ try{ return JSON.parse(raw); }catch(_err){ /* fall through */ } }
+  return detectRepoFromLocation() || { owner:'', repo:'', branch:'main', path:'data/lessons.json' };
+}
+function setGithubRepoSettings(cfg){ localStorage.setItem(GITHUB_REPO_STORAGE, JSON.stringify(cfg)); }
+
+function b64EncodeUnicode(str){ return btoa(unescape(encodeURIComponent(str))); }
+
+async function githubErrorMessage(res, fallback){
+  try{
+    const data = await res.json();
+    return (data && data.message) ? data.message : fallback;
+  }catch(_err){
+    return fallback;
+  }
+}
+
+async function githubApiRequest(method, url, pat, body){
+  return fetch(url, {
+    method,
+    headers: {
+      'Authorization': `Bearer ${pat}`,
+      'Accept': 'application/vnd.github+json',
+      'X-GitHub-Api-Version': '2022-11-28',
+      ...(body !== undefined ? { 'Content-Type': 'application/json' } : {}),
+    },
+    body: body !== undefined ? JSON.stringify(body) : undefined,
+  });
+}
 
 async function pullCloudContent(){
   if(!cloudSyncEnabled()) return false;
   try{
-    const res = await fetch(`${JSONBLOB_BASE}/${syncConfig.blobId}`, { cache: 'no-store' });
-    if(!res.ok) throw new Error('Cloud store returned an error.');
+    const { owner, repo, branch, path } = repoConfig;
+    const url = `https://raw.githubusercontent.com/${owner}/${repo}/${branch}/${path}?t=${Date.now()}`;
+    const res = await fetch(url, { cache: 'no-store' });
+    if(!res.ok){
+      if(res.status === 404) return false; // nothing pushed yet — not an error
+      throw new Error(`Cloud store returned an error (HTTP ${res.status}).`);
+    }
     const cloud = await res.json();
     const db = loadDB();
     db.lessons = Array.isArray(cloud.lessons) ? cloud.lessons : [];
@@ -110,36 +187,37 @@ async function pullCloudContent(){
 }
 
 async function pushCloudContent(){
-  if(!cloudSyncEnabled()) return false;
+  const pat = getGithubPat();
+  const cfg = getGithubRepoSettings();
+  if(!pat || !cfg.owner || !cfg.repo) return false; // only an admin device with a saved token + repo can push
   try{
     const db = loadDB();
     const payload = { lessons: db.lessons, vocab: db.vocab, questions: db.questions, updatedAt: Date.now() };
-    const res = await fetch(`${JSONBLOB_BASE}/${syncConfig.blobId}`, {
-      method: 'PUT',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(payload),
-    });
-    if(!res.ok) throw new Error('Cloud store rejected the update.');
+    const contentUrl = `${GITHUB_API_BASE}/repos/${cfg.owner}/${cfg.repo}/contents/${cfg.path}`;
+
+    let sha = null;
+    const getRes = await githubApiRequest('GET', `${contentUrl}?ref=${encodeURIComponent(cfg.branch)}`, pat);
+    if(getRes.ok){
+      sha = (await getRes.json()).sha;
+    }else if(getRes.status !== 404){
+      throw new Error(await githubErrorMessage(getRes, 'Could not read the current file from GitHub.'));
+    }
+
+    const putBody = {
+      message: 'EchoLine: update shared lessons',
+      content: b64EncodeUnicode(JSON.stringify(payload, null, 2)),
+      branch: cfg.branch,
+    };
+    if(sha) putBody.sha = sha;
+
+    const putRes = await githubApiRequest('PUT', contentUrl, pat, putBody);
+    if(!putRes.ok) throw new Error(await githubErrorMessage(putRes, 'GitHub rejected the update.'));
     lastSyncedAt = Date.now();
     return true;
   }catch(err){
     console.error('Cloud push failed:', err);
     return false;
   }
-}
-
-async function createCloudStore(){
-  const db = loadDB();
-  const payload = { lessons: db.lessons, vocab: db.vocab, questions: db.questions, updatedAt: Date.now() };
-  const res = await fetch(JSONBLOB_BASE, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify(payload),
-  });
-  if(!res.ok) throw new Error('Could not create a shared store — check your connection and try again.');
-  const location = res.headers.get('Location');
-  if(!location) throw new Error('The store was created, but no ID came back — please try again.');
-  return location.split('/').pop();
 }
 
 // Called from route() for learner-facing pages, so content quietly refreshes on navigation too
@@ -447,7 +525,7 @@ window.addEventListener('hashchange', route);
 window.addEventListener('DOMContentLoaded', () => {
   loadDB();
   route();
-  loadSyncConfig().then(() => {
+  resolveRepoConfig().then(() => {
     if(cloudSyncEnabled()) pullCloudContent().then(() => route());
   });
 });
@@ -1231,64 +1309,105 @@ async function handleBulkAddLessons(e){
 /* ---------------------------- Admin: cloud sync -------------------------- */
 
 function renderAdminSync(){
+  const pat = getGithubPat();
+  const repoCfg = getGithubRepoSettings();
+  const detected = detectRepoFromLocation();
   app.innerHTML = `
     <a href="#/admin" class="btn ghost small">&larr; Admin</a>
-    <div class="section-title" style="margin-top:14px;"><h1>Cloud sync</h1></div>
-    <div class="card" style="max-width:660px;">
-      ${cloudSyncEnabled() ? `
-        <p style="margin-top:0;"><span class="score-pill good">Cloud sync is ON</span></p>
-        <p style="color:var(--text-dim);">Lessons, vocabulary, and speaking questions saved here are shared with every learner on every device, through a small free JSON store. Accounts and personal progress stay local to each device, same as before.</p>
-        <div style="display:flex;gap:10px;flex-wrap:wrap;margin-top:16px;">
-          <button class="btn small" onclick="handlePushCloud()">⬆ Push my local content to the cloud</button>
-          <button class="btn secondary small" onclick="handlePullCloud()">⬇ Pull latest from the cloud</button>
-        </div>
-        <p id="sync-status" class="ai-status"></p>
-        <p style="color:var(--text-dim);font-size:.82rem;margin-top:18px;">To turn cloud sync off, clear the <span class="badge">blobId</span> value in <span class="badge">sync-config.json</span> and redeploy.</p>
-      ` : `
-        <p style="margin-top:0;"><span class="score-pill low">Cloud sync is OFF</span></p>
-        <p style="color:var(--text-dim);">Right now, lessons only live in this browser's storage — learners on other devices or browsers won't see them. Click below to create a free shared store (no signup), then do one small one-time file edit to switch it on for everyone.</p>
-        <button class="btn" id="create-store-btn" onclick="handleCreateCloudStore()">☁ Create a shared store</button>
-        <div id="sync-setup-result" style="margin-top:18px;"></div>
-      `}
+    <div class="section-title" style="margin-top:14px;"><h1>Cloud sync (via GitHub)</h1></div>
+    <p style="color:var(--text-dim);max-width:660px;">Push commits your lessons, vocabulary, and questions straight into this site's GitHub repo. Learners only ever pull — this Admin page is the only place with push controls.</p>
+
+    <div class="card" style="max-width:660px;margin-top:16px;">
+      <p style="margin-top:0;"><strong>1. Your GitHub repo</strong></p>
+      ${detected
+        ? `<p style="color:var(--text-dim);font-size:.85rem;">Auto-detected from this site's URL: <span class="badge">${escapeHtml(detected.owner)}/${escapeHtml(detected.repo)}</span>. Only change the fields below if that's wrong (e.g. a custom domain) or lessons should live in a different repo.</p>`
+        : `<p style="color:var(--text-dim);font-size:.85rem;">Couldn't auto-detect a repo from this URL (not a standard <span class="badge">*.github.io</span> address) — fill in the fields below.</p>`}
+      <label for="gh-owner">Repo owner (your GitHub username or org)</label>
+      <input id="gh-owner" type="text" value="${escapeHtml(repoCfg.owner||'')}" placeholder="e.g. yourname">
+      <label for="gh-repo">Repo name</label>
+      <input id="gh-repo" type="text" value="${escapeHtml(repoCfg.repo||'')}" placeholder="e.g. ela-app">
+      <label for="gh-branch">Branch</label>
+      <input id="gh-branch" type="text" value="${escapeHtml(repoCfg.branch||'main')}" placeholder="main">
+      <label for="gh-path">File path in the repo</label>
+      <input id="gh-path" type="text" value="${escapeHtml(repoCfg.path||'data/lessons.json')}" placeholder="data/lessons.json">
+      <button class="btn secondary small" onclick="handleSaveRepoSettings()">Save repo settings</button>
+      <p id="repo-status" class="ai-status"></p>
+    </div>
+
+    <div class="card" style="max-width:660px;margin-top:16px;">
+      <p style="margin-top:0;"><strong>2. Your GitHub Personal Access Token</strong></p>
+      <p style="color:var(--text-dim);">
+        Create a free, <strong>fine-grained</strong> token scoped to just this one repo at
+        <a href="https://github.com/settings/personal-access-tokens/new" target="_blank" style="color:var(--amber-hi);">github.com/settings/personal-access-tokens/new</a>
+        — under "Repository access" pick this repo only, and under "Repository permissions" grant
+        <strong>Contents: Read and write</strong>. This token stays only in this browser — it's never
+        committed to the repo, and learners are never shown this field, so they can only pull.
+      </p>
+      <div style="display:flex;gap:10px;flex-wrap:wrap;align-items:center;">
+        <input id="gh-pat" type="password" style="flex:1;min-width:220px;" value="${escapeHtml(pat)}" placeholder="Paste your token (ghp_… or github_pat_…)">
+        <button class="btn secondary small" onclick="handleSaveGithubPat()">Save token</button>
+      </div>
+      <p id="pat-status" class="ai-status"></p>
+    </div>
+
+    <div class="card" style="max-width:660px;margin-top:16px;">
+      <p style="margin-top:0;"><strong>3. Push / pull</strong></p>
+      <p><span class="score-pill ${cloudSyncEnabled() ? 'good' : 'low'}">Cloud sync is ${cloudSyncEnabled() ? 'ON' : 'OFF'}</span></p>
+      <p style="color:var(--text-dim);">
+        Push commits straight to
+        <span class="badge">${escapeHtml(repoCfg.owner||'owner')}/${escapeHtml(repoCfg.repo||'repo')}/${escapeHtml(repoCfg.path||'data/lessons.json')}</span>
+        on GitHub — no manual file editing or redeploy needed. Learners pick it up automatically the
+        next time they open the app or the Lessons page (usually within moments, occasionally a
+        couple of minutes due to GitHub's CDN cache on raw file reads).
+      </p>
+      <div style="display:flex;gap:10px;flex-wrap:wrap;">
+        <button class="btn small" onclick="handlePushCloud()">⬆ Push my local content to GitHub</button>
+        <button class="btn secondary small" onclick="handlePullCloud()">⬇ Pull latest from GitHub</button>
+      </div>
+      <p id="sync-status" class="ai-status"></p>
     </div>
   `;
 }
 
-async function handleCreateCloudStore(){
-  const btn = document.getElementById('create-store-btn');
-  const resultEl = document.getElementById('sync-setup-result');
-  if(btn) btn.disabled = true;
-  resultEl.innerHTML = toast('Creating a free shared store…', 'info');
-  try{
-    const id = await createCloudStore();
-    resultEl.innerHTML = `
-      <div class="alert success">Store created! One last step to switch cloud sync on for everyone:</div>
-      <p style="color:var(--text-dim);">Open <span class="badge">sync-config.json</span> in your deployed files, set it to the value below, save, and redeploy (push to GitHub, re-drag the folder into Netlify, etc.). From then on, every learner's browser will read lessons from this same shared store.</p>
-      <div class="transcript-box" style="user-select:all;">{
-  "blobId": "${id}"
-}</div>
-      <p style="color:var(--text-dim);font-size:.82rem;margin-top:10px;">Your current lessons, vocabulary, and questions on this device were already copied into the new store, so nothing is lost once it's switched on.</p>
-    `;
-  }catch(err){
-    resultEl.innerHTML = toast(err.message || 'Could not create a shared store — check your connection and try again.', 'error');
-  }finally{
-    if(btn) btn.disabled = false;
-  }
+function handleSaveRepoSettings(){
+  const cfg = {
+    owner: document.getElementById('gh-owner').value.trim(),
+    repo: document.getElementById('gh-repo').value.trim(),
+    branch: document.getElementById('gh-branch').value.trim() || 'main',
+    path: document.getElementById('gh-path').value.trim() || 'data/lessons.json',
+  };
+  setGithubRepoSettings(cfg);
+  const statusEl = document.getElementById('repo-status');
+  if(statusEl) statusEl.textContent = 'Saved to this browser.';
+}
+
+function handleSaveGithubPat(){
+  const val = document.getElementById('gh-pat').value.trim();
+  setGithubPat(val);
+  const statusEl = document.getElementById('pat-status');
+  if(statusEl) statusEl.textContent = val ? 'Saved to this browser.' : 'Cleared.';
 }
 
 async function handlePushCloud(){
   const statusEl = document.getElementById('sync-status');
-  statusEl.textContent = '⬆ Pushing…';
+  const pat = getGithubPat();
+  const cfg = getGithubRepoSettings();
+  if(!pat){ statusEl.textContent = 'Add your GitHub token above first.'; return; }
+  if(!cfg.owner || !cfg.repo){ statusEl.textContent = 'Save your repo owner/name above first.'; return; }
+  statusEl.textContent = '⬆ Pushing to GitHub…';
   const ok = await pushCloudContent();
   statusEl.textContent = ok
-    ? 'Pushed just now. Other devices will get this the next time they open or refresh the app.'
-    : 'Could not reach the cloud store — check your connection and try again.';
+    ? 'Pushed just now — committed straight to your GitHub repo. Other devices will pick it up automatically.'
+    : "Couldn't push — check your token's repo permissions, the repo/branch/path, and your connection.";
 }
 
 async function handlePullCloud(){
   const statusEl = document.getElementById('sync-status');
   statusEl.textContent = '⬇ Pulling…';
+  await resolveRepoConfig();
   const ok = await pullCloudContent();
-  statusEl.textContent = ok ? 'Pulled the latest shared content just now.' : 'Could not reach the cloud store — check your connection and try again.';
+  statusEl.textContent = ok
+    ? 'Pulled the latest shared content just now.'
+    : 'Nothing to pull yet, or the repo/branch/path is wrong — check the settings above.';
   if(ok) renderAdminSync();
 }

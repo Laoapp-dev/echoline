@@ -68,36 +68,85 @@ API, which this app deliberately avoids to stay a free, key-free static
 site. Instead: open the playlist on YouTube, copy each video's own link, and
 paste that whole batch into the bulk-add box.
 
-## Cloud sync (push lessons to every device)
+## Cloud sync (push lessons to every device, via GitHub)
 
 By default, lesson content still only lives in whichever browser created
-it. **Admin → ☁ Cloud sync** turns on a small, free, key-free shared JSON
-store (via jsonblob.com) so lessons, vocabulary, and speaking questions
-reach every learner, on every device — accounts and personal progress stay
-local to each device, same as before.
+it. **Admin → ☁ Cloud sync** commits lessons, vocabulary, and speaking
+questions straight into this site's own GitHub repo, as a JSON file —
+learners' devices then pull that file automatically. Accounts and personal
+progress stay local to each device, same as before, and **learners can only
+pull** — the push controls only exist on the Admin page, and are never
+shown to a non-admin account.
 
-Setup (one time, per deployment):
+Two GitHub endpoints make this work from a plain static site with no server
+of its own, both confirmed to support cross-origin (CORS) requests from the
+browser:
+- `api.github.com` — used to commit the updated file (admin only, needs a
+  token).
+- `raw.githubusercontent.com` — used to read it back (everyone, no token
+  needed, since reading is just fetching a public file from the repo).
 
-1. Go to **Admin → ☁ Cloud sync → Create a shared store**. This creates a
-   free store pre-loaded with whatever lessons already exist on this device.
-2. It shows you a `blobId` value — open `sync-config.json` in your deployed
-   files, paste that value in, save, and redeploy (push to GitHub, re-drag
-   into Netlify, etc.).
-3. From then on, every device that loads the app reads `sync-config.json`,
-   finds the same store, and pulls the latest lessons on load (and again
-   when opening the Lessons page, if more than ~15 seconds have passed).
-   Any admin change (add/edit/delete lesson, vocab, or question) is pushed
-   to the store automatically.
+Because pushing is a real commit straight into the repo, there's **no
+manual file-editing-and-redeploy step** for the common case (a standard
+GitHub Pages site) — click Push and it's live within moments.
+
+(Earlier versions of this used jsonblob.com, then jsonbin.io, both
+third-party JSON-store services. jsonblob turned out not to support CORS at
+all — every request silently failed with "Failed to fetch." jsonbin.io
+worked, but needed a separate free account/service; this version uses the
+GitHub repo the admin already owns and deploys from instead.)
+
+Setup (one time, per admin device):
+
+1. Go to **Admin → ☁ Cloud sync**. If this is deployed at a standard GitHub
+   Pages address (`https://yourname.github.io/` or
+   `https://yourname.github.io/your-repo/`), the repo owner/name are
+   auto-filled for you — check they're correct, adjust the branch/path if
+   you want, then click **Save repo settings**.
+2. Create a free, **fine-grained** Personal Access Token at
+   [github.com/settings/personal-access-tokens/new](https://github.com/settings/personal-access-tokens/new):
+   under "Repository access," pick this one repo only; under "Repository
+   permissions," grant **Contents: Read and write**. Paste it into the app
+   and click **Save token**. This token stays only in this browser's
+   storage — it's never committed anywhere, and learners are never shown
+   this field at all.
+3. Click **⬆ Push my local content to GitHub**. This commits your current
+   lessons/vocab/questions to `data/lessons.json` (or wherever you set the
+   path) in your repo.
+4. From then on, every device — including learners, with zero setup on
+   their end — reads that same file from `raw.githubusercontent.com` on
+   load and when opening the Lessons page (if more than ~15 seconds have
+   passed). Any further admin change (add/edit/delete lesson, vocab, or
+   question) is pushed automatically, from any browser that has the token
+   saved (step 2). Other admin devices need their own copy of that token to
+   push too; they can always pull without it.
+
+If your site isn't at a standard `*.github.io` address (a custom domain, or
+lessons stored in a different repo than the one serving the site), auto-
+detection won't find the right repo. In that case, either fill in the repo
+fields manually in **Admin → ☁ Cloud sync** (each admin device needs this
+once), or ship a `data-config.json` file with the deployed app (same idea
+as before — edit it once with `{"owner": "...", "repo": "...", "branch":
+"...", "path": "..."}` and redeploy) so every device, including learners,
+can find the right repo without needing to auto-detect it.
 
 This is a "syncs on refresh" model, not instant real-time push — a learner
 who's mid-session won't see a brand-new lesson appear without reloading or
-re-opening the Lessons page, but any refresh afterwards will have it. Use
-**Admin → ☁ Cloud sync → Push / Pull** buttons any time to sync on demand.
+re-opening the Lessons page, but any refresh afterwards will have it
+(usually within moments; occasionally a couple of minutes, since GitHub's
+CDN briefly caches raw file reads). Use **Admin → ☁ Cloud sync → Push /
+Pull** buttons any time to sync on demand.
 
-To turn cloud sync back off, clear the `blobId` in `sync-config.json` and
-redeploy — the app falls back to local-only storage exactly as before.
+To turn cloud sync off, remove the admin's saved token (clear the token
+field and click Save) — pushing stops, and reads simply return nothing new
+until it's turned back on. The repo file itself isn't deleted.
 
+⚠️ The token you create should be scoped to **only this one repo**, with
+**only** Contents: Read & write — never use a broad, all-repos token here.
+Treat it like a password: it lives only in that browser's local storage, so
+don't paste it on a shared/public computer without clearing it afterwards.
 
+## Install on a phone (or desktop) like an app
 
 EchoLine is an installable Progressive Web App:
 
@@ -108,6 +157,7 @@ EchoLine is an installable Progressive Web App:
   this manual step is required there.
 - **Desktop (Chrome/Edge)**: click the install icon in the address bar, or
   the **⬇ Install app** button in the nav.
+
 
 Once installed it opens full-screen without browser chrome, and its own
 static files (HTML/CSS/JS/icons) are cached by a service worker so the app
@@ -120,9 +170,10 @@ still needs an internet connection.
 ```
 index.html               entry page + shell (nav, header, footer), PWA meta tags
 css/style.css             design system and all styling
-js/app.js                 data store, auth, router, every view, AI Assist, PWA install logic
+js/app.js                 data store, auth, router, every view, AI Assist, cloud sync, PWA install logic
 manifest.json             PWA manifest (name, icons, colors)
 service-worker.js         offline cache for the app's own static files
+data-config.json          optional override for cloud sync's repo owner/name/branch/path
 icons/                    app icons for home-screen / install
 README.md                 this file
 ```
@@ -186,13 +237,16 @@ site like this.
   is unaffected either way. AI-drafted meanings/questions can occasionally be
   imperfect, so review them before importing, same as you would any
   auto-generated content.
-- **Cloud sync depends on a third-party free service** (jsonblob.com) too.
-  It's free and needs no signup or key, but treat the store like a shared
-  link: anyone who has the `blobId` can read and overwrite it, so don't rely
-  on it for anything sensitive — it's meant for lesson content only. If the
-  service is ever down or the store is deleted, cloud sync simply stops
-  updating until a new store is created; each device's local copy keeps
-  working in the meantime.
+- **Cloud sync depends on GitHub's API and CDN.** Reading is keyless and
+  works for anyone, but pushing needs a Personal Access Token with write
+  access to the repo — treat that token like a password (see "Cloud sync"
+  above). Raw file reads go through GitHub's CDN, which briefly caches
+  responses, so a push can take up to a couple of minutes to show up for
+  everyone rather than being truly instant. If GitHub is ever unreachable,
+  cloud sync simply stops updating until it's back; each device's local
+  copy keeps working in the meantime. The Contents API used for pushing
+  also caps file size around 1MB, which is far more than typical lesson
+  content needs.
 
 ## Customizing
 
