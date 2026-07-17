@@ -87,6 +87,76 @@
       "word": "conditional (if I could... I would...)",
       "meaning": "a grammar structure for imagining or talking about possible situations",
       "example": "If I could do any job, I would be a travel photographer."
+    },
+    {
+      "id": "7s6be56s29m2",
+      "lessonId": "n4xl67xg1wrp",
+      "word": "summer holiday",
+      "meaning": "time off school/work for vacation in summer",
+      "example": "I’m going on my summer holiday tomorrow."
+    },
+    {
+      "id": "th074nwv29m2",
+      "lessonId": "n4xl67xg1wrp",
+      "word": "summer plans",
+      "meaning": "things you plan to do during the summer",
+      "example": "Today we’re talking about summer plans."
+    },
+    {
+      "id": "cusrndfd29m2",
+      "lessonId": "n4xl67xg1wrp",
+      "word": "weekend away",
+      "meaning": "a short trip for the weekend",
+      "example": "It’s become quite common to have a weekend away with friends."
+    },
+    {
+      "id": "44eq75s329m2",
+      "lessonId": "n4xl67xg1wrp",
+      "word": "hen party",
+      "meaning": "a party for a woman before her wedding (UK)",
+      "example": "I’m going to a hen party this weekend."
+    },
+    {
+      "id": "mxmaypmk29m2",
+      "lessonId": "n4xl67xg1wrp",
+      "word": "stag party",
+      "meaning": "a party for a man before his wedding (UK)",
+      "example": "My friend is having a stag party before the wedding."
+    },
+    {
+      "id": "uon7sapg29m2",
+      "lessonId": "n4xl67xg1wrp",
+      "word": "day trips",
+      "meaning": "short trips, often during the day, without staying overnight",
+      "example": "We might do some day trips to the beach."
+    },
+    {
+      "id": "bfe9bh0w29m2",
+      "lessonId": "n4xl67xg1wrp",
+      "word": "mow the lawn",
+      "meaning": "to cut the grass using a lawn mower",
+      "example": "In the summer, I seem to mow the lawn a lot."
+    },
+    {
+      "id": "v2khebdp29m2",
+      "lessonId": "n4xl67xg1wrp",
+      "word": "roof terrace",
+      "meaning": "a patio area on the roof of a building",
+      "example": "At the moment our roof terrace looks pretty disgusting."
+    },
+    {
+      "id": "roipw5qf29m2",
+      "lessonId": "n4xl67xg1wrp",
+      "word": "DIY",
+      "meaning": "do-it-yourself work, like building or fixing things at home",
+      "example": "I’m going to do some DIY on my roof terrace this summer."
+    },
+    {
+      "id": "oeb1fu0029m2",
+      "lessonId": "n4xl67xg1wrp",
+      "word": "barbecue",
+      "meaning": "an outdoor grill and also the meal/event cooked on it",
+      "example": "I love to barbecue in the summer and I grill fish."
     }
   ],
   "questions": [
@@ -119,7 +189,32 @@
       "id": "nbpg4t9wou32",
       "lessonId": "xy3t0wwkmkau",
       "text": "Based on the conversation, what lesson do you think people learn about dream jobs? Explain your answer."
+    },
+    {
+      "id": "njhyr64i2kfu",
+      "lessonId": "n4xl67xg1wrp",
+      "text": "What summer plans do Georgie and Neil each talk about in the conversation?"
+    },
+    {
+      "id": "bph3sr8m2kfu",
+      "lessonId": "n4xl67xg1wrp",
+      "text": "What is a “hen party” (and what is a “stag party”) in the UK, and how does Georgie say people celebrate before a wedding?"
+    },
+    {
+      "id": "dmtwmont2kfu",
+      "lessonId": "n4xl67xg1wrp",
+      "text": "Why does Neil say staying in the UK is still OK for him in summer—what does he plan to do?"
+    },
+    {
+      "id": "h7y6h2182kfu",
+      "lessonId": "n4xl67xg1wrp",
+      "text": "Georgie mentions that she isn’t very interested in DIY, but she still wants to improve the roof terrace. What could motivate her to do it anyway?"
+    },
+    {
+      "id": "bk8sydf62kfu",
+      "lessonId": "n4xl67xg1wrp",
+      "text": "What do you think is the best “summer activity” from the conversation (picnics, barbecues, day trips, camping, etc.) and why?"
     }
   ],
-  "updatedAt": 1784283039781
+  "updatedAt": 1784283100746
 }
