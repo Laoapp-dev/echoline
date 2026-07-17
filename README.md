@@ -146,6 +146,34 @@ until it's turned back on. The repo file itself isn't deleted.
 Treat it like a password: it lives only in that browser's local storage, so
 don't paste it on a shared/public computer without clearing it afterwards.
 
+### Fixed: push/pull silently failing
+
+An earlier version of this had two bugs that made push/pull unreliable:
+
+1. **A disallowed header silently blocked every GitHub API call.** The code
+   sent `X-GitHub-Api-Version` on every request, but that header isn't in
+   GitHub's own CORS allow-list (confirmed against GitHub's current CORS
+   docs), so browsers blocked the preflight check before the request ever
+   went out — with no error the app could actually see, just a dead push
+   button. That header has been removed; only headers GitHub explicitly
+   allows (`Authorization`, `Content-Type`, plus the CORS-safelisted
+   `Accept`) are sent now.
+2. **A failed pull could retry in a tight loop.** If cloud sync was turned
+   on but nothing had been pushed yet (a very common state — right after
+   first setting it up), every pull attempt "failed" (404, nothing there
+   yet), which used to leave the retry-throttle timer un-set, so the very
+   next render would immediately try again — and again, as fast as the
+   browser could go. Retries are now throttled on every attempt, success or
+   not, so a not-yet-populated or temporarily unreachable store just waits
+   quietly for the next scheduled check instead of hammering the network.
+
+If push/pull still isn't working after updating, the error message shown
+next to the Push/Pull buttons is now GitHub's actual response (e.g. "Bad
+credentials", "Not Found", "Resource not accessible by personal access
+token") rather than a generic failure — that's almost always enough to spot
+whether it's the token's permissions, the repo/branch/path, or something
+else.
+
 ## Install on a phone (or desktop) like an app
 
 EchoLine is an installable Progressive Web App:

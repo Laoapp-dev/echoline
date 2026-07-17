@@ -94,7 +94,8 @@ const GITHUB_REPO_STORAGE = 'echoline_github_repo_v1';
 const SYNC_MIN_INTERVAL_MS = 15000; // don't re-pull more than once per 15s from navigation alone
 
 let repoConfig = null; // resolved {owner, repo, branch, path} used for reading (all devices)
-let lastSyncedAt = null;
+let lastSyncedAt = null;      // last time a pull actually succeeded
+let lastSyncAttemptAt = null; // last time a pull was attempted, success or not (throttles retries)
 let syncInFlight = false;
 
 // Works for the common case: a site served at https://{owner}.github.io/
@@ -109,6 +110,8 @@ function detectRepoFromLocation(){
 }
 
 async function resolveRepoConfig(){
+  // 1. An explicit override shipped with the deployed app — works for every
+  //    device, including learners, with no per-device setup.
   try{
     const res = await fetch(DATA_CONFIG_URL, { cache: 'no-store' });
     if(res.ok){
@@ -118,7 +121,18 @@ async function resolveRepoConfig(){
         return repoConfig;
       }
     }
-  }catch(_err){ /* fall through to auto-detect */ }
+  }catch(_err){ /* fall through */ }
+
+  // 2. This device's own manually-saved settings (e.g. admin entered them
+  //    directly because auto-detect below doesn't apply — testing locally,
+  //    a custom domain, etc).
+  const saved = getSavedGithubRepoSettings();
+  if(saved && saved.owner && saved.repo){
+    repoConfig = { owner: saved.owner, repo: saved.repo, branch: saved.branch || 'main', path: saved.path || 'data/lessons.json' };
+    return repoConfig;
+  }
+
+  // 3. Auto-detect from a standard GitHub Pages URL.
   repoConfig = detectRepoFromLocation();
   return repoConfig;
 }
@@ -138,6 +152,15 @@ function getGithubRepoSettings(){
 }
 function setGithubRepoSettings(cfg){ localStorage.setItem(GITHUB_REPO_STORAGE, JSON.stringify(cfg)); }
 
+// Only what's explicitly been saved on THIS device — no auto-detect fallback.
+// Used by resolveRepoConfig() so a manually-entered repo (e.g. testing locally,
+// or a custom domain) takes effect for reading too, not just for pushing.
+function getSavedGithubRepoSettings(){
+  const raw = localStorage.getItem(GITHUB_REPO_STORAGE);
+  if(!raw) return null;
+  try{ return JSON.parse(raw); }catch(_err){ return null; }
+}
+
 function b64EncodeUnicode(str){ return btoa(unescape(encodeURIComponent(str))); }
 
 async function githubErrorMessage(res, fallback){
@@ -150,12 +173,17 @@ async function githubErrorMessage(res, fallback){
 }
 
 async function githubApiRequest(method, url, pat, body){
+  // NOTE: only send headers GitHub's CORS preflight explicitly allows —
+  // Authorization, Content-Type, If-Match, If-Modified-Since, If-None-Match,
+  // If-Unmodified-Since, X-Requested-With (confirmed against GitHub's own
+  // CORS docs). A header like X-GitHub-Api-Version is NOT on that list, so
+  // adding it here would make the browser silently block every request at
+  // the CORS preflight stage — this bit a previous version of this file.
   return fetch(url, {
     method,
     headers: {
       'Authorization': `Bearer ${pat}`,
-      'Accept': 'application/vnd.github+json',
-      'X-GitHub-Api-Version': '2022-11-28',
+      'Accept': 'application/vnd.github+json', // "Accept" is CORS-safelisted, no allow-list entry needed
       ...(body !== undefined ? { 'Content-Type': 'application/json' } : {}),
     },
     body: body !== undefined ? JSON.stringify(body) : undefined,
@@ -163,14 +191,15 @@ async function githubApiRequest(method, url, pat, body){
 }
 
 async function pullCloudContent(){
-  if(!cloudSyncEnabled()) return false;
+  if(!cloudSyncEnabled()) return { ok:false, message:'Cloud sync repo is not configured on this device.' };
+  lastSyncAttemptAt = Date.now(); // set BEFORE the request, so a slow/failed pull still throttles retries
   try{
     const { owner, repo, branch, path } = repoConfig;
     const url = `https://raw.githubusercontent.com/${owner}/${repo}/${branch}/${path}?t=${Date.now()}`;
     const res = await fetch(url, { cache: 'no-store' });
     if(!res.ok){
-      if(res.status === 404) return false; // nothing pushed yet — not an error
-      throw new Error(`Cloud store returned an error (HTTP ${res.status}).`);
+      if(res.status === 404) return { ok:false, notFound:true, message:'No shared lessons file yet — push from Admin first.' };
+      throw new Error(`GitHub returned HTTP ${res.status} while reading the shared lessons file.`);
     }
     const cloud = await res.json();
     const db = loadDB();
@@ -179,17 +208,18 @@ async function pullCloudContent(){
     db.questions = Array.isArray(cloud.questions) ? cloud.questions : [];
     saveDB(db);
     lastSyncedAt = Date.now();
-    return true;
+    return { ok:true, message:`Pulled ${db.lessons.length} lesson(s), ${db.vocab.length} vocab word(s), ${db.questions.length} question(s).` };
   }catch(err){
     console.error('Cloud pull failed:', err);
-    return false;
+    return { ok:false, message: err.message || 'Could not reach GitHub — check your connection.' };
   }
 }
 
 async function pushCloudContent(){
   const pat = getGithubPat();
   const cfg = getGithubRepoSettings();
-  if(!pat || !cfg.owner || !cfg.repo) return false; // only an admin device with a saved token + repo can push
+  if(!pat) return { ok:false, message:'No GitHub token saved on this device — only an admin device with a token can push.' };
+  if(!cfg.owner || !cfg.repo) return { ok:false, message:'Repo owner/name are not set.' };
   try{
     const db = loadDB();
     const payload = { lessons: db.lessons, vocab: db.vocab, questions: db.questions, updatedAt: Date.now() };
@@ -200,7 +230,7 @@ async function pushCloudContent(){
     if(getRes.ok){
       sha = (await getRes.json()).sha;
     }else if(getRes.status !== 404){
-      throw new Error(await githubErrorMessage(getRes, 'Could not read the current file from GitHub.'));
+      throw new Error(await githubErrorMessage(getRes, `Could not read the current file from GitHub (HTTP ${getRes.status}).`));
     }
 
     const putBody = {
@@ -211,19 +241,22 @@ async function pushCloudContent(){
     if(sha) putBody.sha = sha;
 
     const putRes = await githubApiRequest('PUT', contentUrl, pat, putBody);
-    if(!putRes.ok) throw new Error(await githubErrorMessage(putRes, 'GitHub rejected the update.'));
+    if(!putRes.ok) throw new Error(await githubErrorMessage(putRes, `GitHub rejected the update (HTTP ${putRes.status}).`));
     lastSyncedAt = Date.now();
-    return true;
+    lastSyncAttemptAt = Date.now();
+    return { ok:true, message:`Pushed ${db.lessons.length} lesson(s) to GitHub.` };
   }catch(err){
     console.error('Cloud push failed:', err);
-    return false;
+    return { ok:false, message: err.message || 'Could not reach GitHub — check your connection.' };
   }
 }
 
-// Called from route() for learner-facing pages, so content quietly refreshes on navigation too
+// Called from route() for learner-facing pages, so content quietly refreshes on navigation too.
+// Throttled by lastSyncAttemptAt (set even on failure) so a broken/empty
+// store can't trigger a tight retry loop on every render.
 function maybeResyncThenRerender(){
   if(!cloudSyncEnabled()) return;
-  if(lastSyncedAt && (Date.now() - lastSyncedAt) < SYNC_MIN_INTERVAL_MS) return;
+  if(lastSyncAttemptAt && (Date.now() - lastSyncAttemptAt) < SYNC_MIN_INTERVAL_MS) return;
   if(syncInFlight) return;
   syncInFlight = true;
   pullCloudContent().finally(() => {
@@ -1374,11 +1407,14 @@ function handleSaveRepoSettings(){
     owner: document.getElementById('gh-owner').value.trim(),
     repo: document.getElementById('gh-repo').value.trim(),
     branch: document.getElementById('gh-branch').value.trim() || 'main',
-    path: document.getElementById('gh-path').value.trim() || 'data/lessons.json',
+    path: (document.getElementById('gh-path').value.trim() || 'data/lessons.json').replace(/^\/+/, ''),
   };
   setGithubRepoSettings(cfg);
+  repoConfig = cfg; // take effect immediately on this device, for pull as well as push — no reload needed
+  lastSyncAttemptAt = null; // let the next pull attempt run right away against the new settings
   const statusEl = document.getElementById('repo-status');
-  if(statusEl) statusEl.textContent = 'Saved to this browser.';
+  if(statusEl) statusEl.textContent = 'Saved — this device will push and pull using these settings now.';
+  renderAdminSync();
 }
 
 function handleSaveGithubPat(){
@@ -1395,19 +1431,18 @@ async function handlePushCloud(){
   if(!pat){ statusEl.textContent = 'Add your GitHub token above first.'; return; }
   if(!cfg.owner || !cfg.repo){ statusEl.textContent = 'Save your repo owner/name above first.'; return; }
   statusEl.textContent = '⬆ Pushing to GitHub…';
-  const ok = await pushCloudContent();
-  statusEl.textContent = ok
-    ? 'Pushed just now — committed straight to your GitHub repo. Other devices will pick it up automatically.'
-    : "Couldn't push — check your token's repo permissions, the repo/branch/path, and your connection.";
+  const result = await pushCloudContent();
+  statusEl.textContent = result.ok
+    ? `${result.message} Other devices will pick it up automatically.`
+    : `Couldn't push: ${result.message}`;
 }
 
 async function handlePullCloud(){
   const statusEl = document.getElementById('sync-status');
   statusEl.textContent = '⬇ Pulling…';
   await resolveRepoConfig();
-  const ok = await pullCloudContent();
-  statusEl.textContent = ok
-    ? 'Pulled the latest shared content just now.'
-    : 'Nothing to pull yet, or the repo/branch/path is wrong — check the settings above.';
-  if(ok) renderAdminSync();
+  lastSyncAttemptAt = null; // this is an explicit manual pull — don't let the throttle skip it
+  const result = await pullCloudContent();
+  statusEl.textContent = result.ok ? result.message : `Couldn't pull: ${result.message}`;
+  if(result.ok) renderAdminSync();
 }
