@@ -1398,8 +1398,40 @@ function renderAdminSync(){
         <button class="btn secondary small" onclick="handlePullCloud()">⬇ Pull latest from GitHub</button>
       </div>
       <p id="sync-status" class="ai-status"></p>
+      <div id="sync-hint"></div>
+    </div>
+
+    <div class="card" style="max-width:660px;margin-top:16px;">
+      <p style="margin-top:0;"><strong>If push fails</strong></p>
+      <p style="color:var(--text-dim);">Most push failures are the token's permissions, not this app. Check, in order:</p>
+      <ol style="color:var(--text-dim);padding-left:20px;line-height:1.7;">
+        <li>Under <strong>Repository access</strong> on the token, this exact repo (<span class="badge">${escapeHtml(repoCfg.owner||'owner')}/${escapeHtml(repoCfg.repo||'repo')}</span>) is selected — not left on "Public repositories" (that's read-only and grants nothing).</li>
+        <li>Under <strong>Repository permissions</strong>, <strong>Contents</strong> is set to <strong>Read and write</strong> (not just Read).</li>
+        <li>If <span class="badge">${escapeHtml(repoCfg.owner||'owner')}</span> is an <strong>organization</strong> (not your personal username), the token's <strong>Resource owner</strong> must be set to that organization when creating it — and the org must allow fine-grained tokens (org Settings → Personal access tokens → Settings). Some orgs also require an admin to <strong>approve</strong> the token before it works (org Settings → Personal access tokens → Pending requests) — it'll silently fail with this exact error until approved.</li>
+        <li>The token hasn't expired.</li>
+        <li>If the org uses SAML single sign-on, the token may need a one-time <strong>"Enable SSO"</strong> authorization (shown next to the token on your GitHub tokens page).</li>
+      </ol>
     </div>
   `;
+}
+
+// Recognizes a few common GitHub API error strings and adds a specific,
+// actionable hint underneath the generic status message.
+function githubErrorHint(message){
+  const m = (message || '').toLowerCase();
+  if(m.includes('resource not accessible')){
+    return "This is almost always the token's permissions or repo access — see \"If push fails\" below, especially the organization-approval step if the repo owner is an org, not a personal account.";
+  }
+  if(m.includes('bad credentials')){
+    return 'The token looks invalid or expired — generate a new one and save it above.';
+  }
+  if(m.includes('not found')){
+    return "GitHub can't see this repo/branch with this token — double check the owner, repo name, and branch spelling above (case-sensitive), and that the token's repo access includes it.";
+  }
+  if(m.includes('422') || m.includes('reference update failed') || m.includes('sha')){
+    return 'Someone else (or another tab) may have just pushed a change — try Pull, then Push again.';
+  }
+  return '';
 }
 
 function handleSaveRepoSettings(){
@@ -1426,23 +1458,37 @@ function handleSaveGithubPat(){
 
 async function handlePushCloud(){
   const statusEl = document.getElementById('sync-status');
+  const hintEl = document.getElementById('sync-hint');
+  if(hintEl) hintEl.innerHTML = '';
   const pat = getGithubPat();
   const cfg = getGithubRepoSettings();
   if(!pat){ statusEl.textContent = 'Add your GitHub token above first.'; return; }
   if(!cfg.owner || !cfg.repo){ statusEl.textContent = 'Save your repo owner/name above first.'; return; }
   statusEl.textContent = '⬆ Pushing to GitHub…';
   const result = await pushCloudContent();
-  statusEl.textContent = result.ok
-    ? `${result.message} Other devices will pick it up automatically.`
-    : `Couldn't push: ${result.message}`;
+  if(result.ok){
+    statusEl.textContent = `${result.message} Other devices will pick it up automatically.`;
+  }else{
+    statusEl.textContent = `Couldn't push: ${result.message}`;
+    const hint = githubErrorHint(result.message);
+    if(hintEl && hint) hintEl.innerHTML = `<p class="ai-status" style="color:var(--amber-hi);">💡 ${hint}</p>`;
+  }
 }
 
 async function handlePullCloud(){
   const statusEl = document.getElementById('sync-status');
+  const hintEl = document.getElementById('sync-hint');
+  if(hintEl) hintEl.innerHTML = '';
   statusEl.textContent = '⬇ Pulling…';
   await resolveRepoConfig();
   lastSyncAttemptAt = null; // this is an explicit manual pull — don't let the throttle skip it
   const result = await pullCloudContent();
-  statusEl.textContent = result.ok ? result.message : `Couldn't pull: ${result.message}`;
-  if(result.ok) renderAdminSync();
+  if(result.ok){
+    statusEl.textContent = result.message;
+    renderAdminSync();
+  }else{
+    statusEl.textContent = `Couldn't pull: ${result.message}`;
+    const hint = githubErrorHint(result.message);
+    if(hintEl && hint) hintEl.innerHTML = `<p class="ai-status" style="color:var(--amber-hi);">💡 ${hint}</p>`;
+  }
 }
