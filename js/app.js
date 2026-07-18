@@ -651,7 +651,9 @@ function route(){
   const hash = location.hash.replace(/^#\/?/, '');
   const parts = hash.split('/').filter(Boolean);
   const isShadowPractice = parts[0]==='practice' && parts[1]==='shadow';
+  const isAdminLessonWorkspace = parts[0]==='admin' && parts[1]==='lesson';
   if(!isShadowPractice) leaveShadowPractice();
+  if(!isAdminLessonWorkspace && tsLessonId) closeTimestampTool();
 
   renderNav();
   const user = currentUser();
@@ -875,18 +877,22 @@ function renderLessonDetail(id){
 
 /* ---------------------------- Shadowing practice -------------------------- */
 
-/* The video stays visible — YouTube's API terms require embedded players to
-   be at least 200x200px and not hidden/obscured, so a true "audio only"
-   mode isn't something this can compliantly do. Instead the video is shown
-   small and de-emphasized next to a big "now playing" control bar, so the
-   experience reads as an audio player with the video as a small companion
-   rather than the main event — and the transcript below follows along with
-   playback in real time. */
+/* The underlying video player has to stay at least 200x200px per YouTube's
+   API terms (embedding it any smaller, or fully removing/disabling it,
+   risks losing embed access) — but it's covered by an opaque "now playing"
+   art overlay (the video's own thumbnail + an animated equalizer), so what
+   learners actually SEE is an audio player, not the video frames. This is
+   applied automatically to every lesson, no per-lesson setup needed. Note
+   this covers the video visually rather than truly removing it — YouTube's
+   terms are about not disabling/hiding the player element itself, and this
+   keeps it present, sized correctly, and technically running underneath. */
 
 let ytPlayer = null, ytReady = false, pendingVideoId = null;
+let tsPlayer = null, tsPendingVideoId = null; // separate small player used by the admin "time by ear" tool
 window.onYouTubeIframeAPIReady = function(){
   ytReady = true;
   if(pendingVideoId) createYTPlayer(pendingVideoId);
+  if(tsPendingVideoId) createTsPlayer(tsPendingVideoId);
 };
 function createYTPlayer(videoId){
   if(!ytReady){ pendingVideoId = videoId; return; }
@@ -913,34 +919,57 @@ function onYTPlayerStateChange(ev){
   const btn = document.getElementById('audio-playpause');
   const playing = ev.data === YT.PlayerState.PLAYING;
   if(btn) btn.innerHTML = playing ? '&#10074;&#10074;' : '&#9658;';
+  const cover = document.getElementById('audio-cover');
+  if(cover) cover.classList.toggle('playing', playing);
   if(playing){ startAudioLoop(); } else { stopAudioLoop(); }
 }
 
-let audioLoopInterval = null;
+let audioLoopRunning = false;
 let lastFollowIdx = -1;
 
+// requestAnimationFrame instead of a fixed setInterval — checks the video's
+// current time on (almost) every frame instead of every 300ms, so the
+// highlight moves as soon as the player reports a new position rather than
+// waiting on a slower timer. (YouTube's own internal time reporting updates
+// a few times a second either way, so this removes OUR added lag on top of
+// that rather than promising perfectly frame-accurate sync.)
+//
+// SYNC_LOOKAHEAD_SEC nudges the time used for *highlighting* slightly ahead
+// of what the player reports, to counter the small inherent reporting lag
+// in getCurrentTime() itself — the displayed clock (audio-cur) still shows
+// the true, un-nudged time. If sync still feels early/late after that, the
+// most effective fix is real per-line timestamps (see the admin "time by
+// ear" tool) — evenly-guessed timestamps can never match real speech
+// pacing exactly, no matter how tight the polling loop is.
+const SYNC_LOOKAHEAD_SEC = 0.15;
+
 function startAudioLoop(){
-  stopAudioLoop();
-  audioLoopInterval = setInterval(() => {
-    if(!ytPlayer || !ytPlayer.getCurrentTime) return;
-    const t = ytPlayer.getCurrentTime();
-    const curEl = document.getElementById('audio-cur');
-    const seekEl = document.getElementById('audio-seek');
-    if(curEl) curEl.textContent = formatTime(t);
-    if(seekEl && !seekEl.__dragging) seekEl.value = String(Math.round(t));
-    const idx = findActiveSentenceIndex(currentSentences, t);
-    if(idx !== lastFollowIdx){
-      lastFollowIdx = idx;
-      document.querySelectorAll('.sentence-item.following').forEach(el=>el.classList.remove('following'));
-      if(idx >= 0){
-        const el = document.getElementById('sent-'+idx);
-        if(el){ el.classList.add('following'); el.scrollIntoView({block:'nearest', behavior:'smooth'}); }
+  if(audioLoopRunning) return;
+  audioLoopRunning = true;
+  const tick = () => {
+    if(!audioLoopRunning) return;
+    if(ytPlayer && ytPlayer.getCurrentTime){
+      const t = ytPlayer.getCurrentTime();
+      const curEl = document.getElementById('audio-cur');
+      const seekEl = document.getElementById('audio-seek');
+      if(curEl) curEl.textContent = formatTime(t);
+      if(seekEl && !seekEl.__dragging) seekEl.value = String(Math.round(t));
+      const idx = findActiveSentenceIndex(currentSentences, t + SYNC_LOOKAHEAD_SEC);
+      if(idx !== lastFollowIdx){
+        lastFollowIdx = idx;
+        document.querySelectorAll('.sentence-item.following').forEach(el=>el.classList.remove('following'));
+        if(idx >= 0){
+          const el = document.getElementById('sent-'+idx);
+          if(el){ el.classList.add('following'); el.scrollIntoView({block:'nearest', behavior:'auto'}); }
+        }
       }
     }
-  }, 300);
+    requestAnimationFrame(tick);
+  };
+  requestAnimationFrame(tick);
 }
 function stopAudioLoop(){
-  if(audioLoopInterval){ clearInterval(audioLoopInterval); audioLoopInterval = null; }
+  audioLoopRunning = false;
 }
 
 function onAudioSeekInput(el, value){
@@ -981,7 +1010,12 @@ function renderShadowPractice(lessonId){
     <div class="practice-panel">
       <div>
         <div class="audio-player">
-          <div class="video-wrap compact"><div id="yt-player-target" style="width:100%;height:100%;"></div></div>
+          <div class="video-wrap compact audio-cover" id="audio-cover" onclick="toggleAudioPlayPause()">
+            <div id="yt-player-target" style="width:100%;height:100%;"></div>
+            <div class="audio-cover-art" style="background-image:url('https://img.youtube.com/vi/${lesson.youtubeId}/hqdefault.jpg')"></div>
+            <div class="audio-cover-shade"></div>
+            <div class="audio-cover-bars"><span></span><span></span><span></span><span></span><span></span></div>
+          </div>
           <div class="audio-player-controls">
             <p class="audio-player-title">${escapeHtml(lesson.title)}</p>
             <div class="audio-player-row">
@@ -1329,7 +1363,9 @@ function renderAdminLessonWorkspace(lessonId){
         <span class="field-hint">Optionally start a line with a timestamp like <span class="badge">[0:12]</span> to sync it with the audio during shadowing practice — lines without one are spaced evenly between the ones you do add.</span>
         <button class="btn" type="submit">Save changes</button>
       </form>
+      <button class="btn secondary small" style="margin-top:10px;" onclick="openTimestampTool('${lesson.id}')">⏱ Tap timestamps while listening</button>
     </div>
+    <div id="timestamp-tool-mount"></div>
 
     <div class="divider"></div>
     <h3>Vocabulary (${vocab.length})</h3>
@@ -1403,6 +1439,129 @@ function handleUpdateLesson(e, lessonId){
   pushCloudContent();
   renderAdminLessonWorkspace(lessonId);
   return false;
+}
+
+/* ---------------------------- Tap-to-time-by-ear tool ---------------------
+   Auto-spread timestamps (the default when a transcript has none at all)
+   can never match real speech pacing — people pause, some lines are longer
+   than others. This tool lets an admin watch/listen to the actual video and
+   tap a button (or press Space) the instant each line starts, capturing the
+   real time straight from the player — far more accurate than typing
+   "[0:12]" by hand from watching a separate timer. */
+
+let tsLines = [], tsIndex = 0, tsLessonId = null, tsKeyHandler = null;
+
+function createTsPlayer(videoId){
+  if(!ytReady){ tsPendingVideoId = videoId; return; }
+  tsPlayer = new YT.Player('ts-player-target', { videoId, playerVars:{rel:0} });
+}
+
+function openTimestampTool(lessonId){
+  const mount = document.getElementById('timestamp-tool-mount');
+  if(!mount) return;
+  if(tsLessonId === lessonId && mount.innerHTML.trim() !== ''){ closeTimestampTool(); return; }
+
+  const db = loadDB();
+  const lesson = db.lessons.find(l => l.id === lessonId);
+  tsLessonId = lessonId;
+  tsLines = parseTranscript(lesson.transcript);
+  tsIndex = Math.max(0, tsLines.findIndex(l => l.time == null));
+  if(tsLines.findIndex(l => l.time == null) === -1) tsIndex = 0; // all already timestamped — start from the top
+
+  mount.innerHTML = `
+    <div class="card ai-assist-card" style="margin-top:14px;">
+      <p style="margin:0 0 10px;"><strong>⏱ Time this transcript by ear</strong></p>
+      <p style="color:var(--text-dim);margin:0 0 14px;">Play the video below. The instant you hear a new line start, click <strong>Mark line</strong> (or press the spacebar) — it captures that exact moment and moves to the next line automatically.</p>
+      <div class="video-wrap" style="max-width:320px;"><div id="ts-player-target" style="width:100%;height:100%;"></div></div>
+      <div style="display:flex;gap:8px;margin:14px 0;flex-wrap:wrap;">
+        <button class="btn secondary small" onclick="tsControl('play')">▶ Play</button>
+        <button class="btn secondary small" onclick="tsControl('pause')">⏸ Pause</button>
+        <button class="btn secondary small" onclick="tsControl('back')">⟲ -2s</button>
+        <button class="btn small" onclick="markTsLine()">⏱ Mark line (Space)</button>
+      </div>
+      <div id="ts-line-list" class="sentence-list" style="max-height:280px;"></div>
+      <div style="display:flex;gap:8px;margin-top:14px;flex-wrap:wrap;">
+        <button class="btn small" onclick="saveTsTimestamps('${lessonId}')">Save timestamps to transcript</button>
+        <button class="btn secondary small" onclick="clearTsTimestamps()">Clear all timestamps</button>
+        <button class="btn ghost small" onclick="closeTimestampTool()">Close</button>
+      </div>
+      <p id="ts-status" class="ai-status"></p>
+    </div>
+  `;
+  renderTsLineList();
+
+  if(ytReady && window.YT && window.YT.Player) createTsPlayer(lesson.youtubeId);
+  else { tsPendingVideoId = lesson.youtubeId; if(window.YT && window.YT.Player){ ytReady = true; createTsPlayer(lesson.youtubeId); } }
+
+  tsKeyHandler = (ev) => {
+    const tag = document.activeElement && document.activeElement.tagName;
+    if(ev.code === 'Space' && tag !== 'INPUT' && tag !== 'TEXTAREA'){
+      ev.preventDefault();
+      markTsLine();
+    }
+  };
+  window.addEventListener('keydown', tsKeyHandler);
+}
+
+function closeTimestampTool(){
+  const mount = document.getElementById('timestamp-tool-mount');
+  if(mount) mount.innerHTML = '';
+  if(tsPlayer && tsPlayer.destroy){ try{ tsPlayer.destroy(); }catch(_err){} }
+  tsPlayer = null;
+  tsPendingVideoId = null;
+  tsLessonId = null;
+  tsLines = [];
+  if(tsKeyHandler){ window.removeEventListener('keydown', tsKeyHandler); tsKeyHandler = null; }
+}
+
+function renderTsLineList(){
+  const listEl = document.getElementById('ts-line-list');
+  if(!listEl) return;
+  listEl.innerHTML = tsLines.map((l,i) => `
+    <div class="sentence-item ${i===tsIndex ? 'active' : ''}" onclick="tsIndex=${i};renderTsLineList();">
+      <span class="sentence-index">${l.time!=null ? formatTime(l.time) : '--:--'}</span>${escapeHtml(l.text)}
+    </div>
+  `).join('');
+  const activeEl = listEl.querySelector('.sentence-item.active');
+  if(activeEl) activeEl.scrollIntoView({block:'nearest'});
+}
+
+function markTsLine(){
+  if(!tsPlayer || !tsPlayer.getCurrentTime || tsLines.length === 0) return;
+  const t = tsPlayer.getCurrentTime();
+  tsLines[tsIndex].time = t;
+  const statusEl = document.getElementById('ts-status');
+  if(statusEl) statusEl.textContent = `Marked line ${tsIndex+1} at ${formatTime(t)}.`;
+  tsIndex = Math.min(tsIndex + 1, tsLines.length - 1);
+  renderTsLineList();
+}
+
+function tsControl(action){
+  if(!tsPlayer) return;
+  if(action==='play') tsPlayer.playVideo();
+  if(action==='pause') tsPlayer.pauseVideo();
+  if(action==='back' && tsPlayer.getCurrentTime) tsPlayer.seekTo(Math.max(0, tsPlayer.getCurrentTime()-2), true);
+}
+
+function clearTsTimestamps(){
+  tsLines = tsLines.map(l => ({...l, time:null}));
+  tsIndex = 0;
+  renderTsLineList();
+  const statusEl = document.getElementById('ts-status');
+  if(statusEl) statusEl.textContent = 'Cleared — all lines are un-timed again.';
+}
+
+function saveTsTimestamps(lessonId){
+  const db = loadDB();
+  const lesson = db.lessons.find(l => l.id === lessonId);
+  const text = tsLines.map(l => l.time != null ? `[${formatTime(l.time)}] ${l.text}` : l.text).join('\n');
+  lesson.transcript = text;
+  saveDB(db);
+  pushCloudContent();
+  const ta = document.getElementById('e-transcript');
+  if(ta) ta.value = text;
+  const statusEl = document.getElementById('ts-status');
+  if(statusEl) statusEl.textContent = `Saved ${tsLines.filter(l=>l.time!=null).length} of ${tsLines.length} timestamps to the transcript above.`;
 }
 
 function handleImportVocab(e, lessonId){

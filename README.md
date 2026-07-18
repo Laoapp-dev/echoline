@@ -38,25 +38,40 @@ Default admin login: **admin / admin123** (change this — see Security notes).
 
 ## Shadowing sync (transcript follows the audio)
 
-The Shadowing practice page is built like a podcast player: a small video
-window (see below for why it isn't hidden entirely), play/pause, a seek bar
-with current time / duration, and speed controls — with the transcript
-taking up the main visual space next to it, highlighting the current line
-and auto-scrolling as the audio plays. Clicking any line jumps playback
-there and opens the record panel for that sentence.
+The Shadowing practice page looks and feels like an audio/podcast player:
+what learners see is the video's own thumbnail with a small animated
+equalizer over it (not the video itself), play/pause, a seek bar with
+current time / duration, and speed controls — with the transcript taking up
+the main visual space next to it, highlighting the current line and
+auto-scrolling as the audio plays. Clicking any line jumps playback there
+and opens the record panel for that sentence. This is automatic for every
+lesson — nothing to turn on per lesson.
 
-**Why the video isn't fully hidden:** YouTube's API Services Terms require
-embedded players to stay at least 200×200 px and forbid hiding or obscuring
-them — so a true "audio-only" mode would violate YouTube's terms and risk
-losing embed access. Instead, the video is shown small (200px tall) next to
-the player controls, so the experience reads as an audio player with a small
-video companion rather than the video being the main focus.
+**Why it's a cover-art overlay rather than truly no video:** YouTube's API
+Services Terms require embedded players to stay at least 200×200 px and
+forbid disabling/hiding the player element itself — a fully-removed
+"audio-only" mode would risk losing embed access. What's shown here keeps
+the real player present and correctly sized underneath, just visually
+covered by the video's own thumbnail and an equalizer animation, so the
+practical experience is "look and feel like audio," while staying on the
+right side of that requirement.
 
-**Timestamps (optional, for accurate sync):** by default, transcript lines
-are spread evenly across the video's duration, which is a rough
-approximation — real speech isn't evenly paced. For better sync, start any
-line with a timestamp like `[0:12]` (or `[1:05:12]` for videos over an
-hour):
+**Timestamps — the real key to tight sync:** by default, transcript lines
+are spread evenly across the video's duration, which is only a rough
+approximation — real speech isn't evenly paced, so evenly-guessed
+timestamps will always feel a little "off" no matter how fast the app
+checks the playback position. Two ways to fix that:
+
+1. **⏱ Tap timestamps while listening** (button in Admin → manage a
+   lesson, under the transcript field) — the real fix. It opens a small
+   player plus the transcript list; play the video, and the instant you
+   hear a line start, click **Mark line** (or just press the spacebar) —
+   it captures the exact playback position and automatically moves to the
+   next line. Takes about as long as the video itself to do the whole
+   transcript, and gives genuinely accurate, per-line sync. Click **Save
+   timestamps to transcript** when done.
+2. **Type timestamps by hand**, if you prefer — start any line with
+   `[0:12]` (or `[1:05:12]` for videos over an hour):
 
 ```
 [0:00] Hello, everyone.
@@ -65,12 +80,11 @@ Today we are talking about something exciting.
 [0:11] Let's get started.
 ```
 
-Lines without a timestamp (like "Today we are talking about...") get one
-interpolated between the nearest timestamps that *are* given — so you don't
-have to timestamp every single line, just a few anchor points throughout
-(e.g. one every 3–5 lines) for noticeably better sync than none at all. If
-you skip timestamps entirely, the lines are just spread evenly across the
-whole video's duration.
+Either way, lines left without a timestamp get one interpolated between the
+nearest ones that *are* set — so partial timing (even just a handful of
+anchor points) is still noticeably better than none. Skip timestamps
+entirely and lines are just spread evenly across the whole video, same as
+before.
 
 ## Free AI Assist (vocabulary + questions)
 
