@@ -189,12 +189,48 @@ input:focus,textarea:focus,select:focus{border-color:var(--amber);}
 }
 .sentence-item:hover{border-color:var(--amber);}
 .sentence-item.active{border-color:var(--amber);background:rgba(255,138,61,.08);}
+.sentence-item.following:not(.active){border-color:var(--mint);background:rgba(110,231,183,.07);}
+.sentence-item.following:not(.active) .sentence-index{color:var(--mint);}
 .sentence-index{font-family:var(--mono);color:var(--amber);font-size:.75rem;margin-right:8px;}
 
 .practice-panel{display:grid;grid-template-columns:1fr 1fr;gap:24px;}
 @media (max-width:850px){.practice-panel{grid-template-columns:1fr;}}
 .video-wrap{aspect-ratio:16/9;border-radius:var(--radius);overflow:hidden;border:1px solid var(--line);background:#000;}
 .video-wrap iframe{width:100%;height:100%;border:0;}
+
+/* Compact video + "now playing" control bar for shadowing practice — the
+   video stays visible (YouTube's API terms require at least 200x200px and
+   forbid hiding/obscuring the player) but is kept small and secondary next
+   to a podcast-style control bar, so the transcript is the main focus. */
+.audio-player{display:flex;gap:16px;align-items:stretch;flex-wrap:wrap;}
+.video-wrap.compact{width:220px;height:200px;aspect-ratio:auto;flex:0 0 auto;}
+.audio-player-controls{
+  flex:1;min-width:220px;background:var(--surface-2);border:1px solid var(--line);
+  border-radius:var(--radius);padding:16px 18px;display:flex;flex-direction:column;justify-content:center;
+}
+.audio-player-title{margin:0 0 12px;font-weight:600;font-size:.95rem;color:var(--text);}
+.audio-player-row{display:flex;align-items:center;gap:14px;}
+.audio-playpause{
+  width:44px;height:44px;border-radius:50%;border:none;background:var(--amber);color:#1a1200;
+  font-size:1rem;cursor:pointer;flex:0 0 auto;display:flex;align-items:center;justify-content:center;
+}
+.audio-playpause:hover{background:var(--amber-hi);}
+.audio-seek-wrap{flex:1;min-width:0;}
+.audio-seek-wrap input[type=range]{
+  -webkit-appearance:none;appearance:none;width:100%;height:4px;border-radius:2px;
+  background:var(--line);outline:none;margin:0;
+}
+.audio-seek-wrap input[type=range]::-webkit-slider-thumb{
+  -webkit-appearance:none;width:14px;height:14px;border-radius:50%;background:var(--amber);cursor:pointer;
+}
+.audio-seek-wrap input[type=range]::-moz-range-thumb{
+  width:14px;height:14px;border-radius:50%;background:var(--amber);border:none;cursor:pointer;
+}
+.audio-time{font-family:var(--mono);font-size:.75rem;color:var(--text-dim);margin-top:6px;}
+@media (max-width:480px){
+  .audio-player{flex-direction:column;}
+  .video-wrap.compact{width:100%;height:auto;aspect-ratio:16/9;}
+}
 
 .transcript-box{
   background:var(--surface-2);border:1px solid var(--line);border-radius:9px;

@@ -296,6 +296,86 @@ function extractYouTubeId(url){
   return null;
 }
 
+/* ---------------------------- Transcript timing ---------------------------
+   A transcript line can optionally start with a timestamp like "[0:12] " or
+   "[1:05:12] " to say exactly when that line is spoken in the video. Lines
+   without one get a time interpolated between the nearest timestamps that
+   ARE given (or spread evenly across the whole video if none are given at
+   all) — so admins can add as few or as many timestamps as they want and
+   still get a reasonably-synced "follow along" experience. */
+
+function parseTranscriptLine(line){
+  const m = line.match(/^\s*\[(\d{1,2}(?::\d{2})?):(\d{2})\]\s*(.*)$/);
+  if(m){
+    const hoursOrMinutes = m[1].includes(':') ? m[1].split(':') : [null, m[1]];
+    const hours = hoursOrMinutes[0] !== null ? parseInt(hoursOrMinutes[0], 10) : 0;
+    const minutes = parseInt(hoursOrMinutes[1], 10);
+    const seconds = parseInt(m[2], 10);
+    return { time: hours*3600 + minutes*60 + seconds, text: m[3].trim() };
+  }
+  return { time: null, text: line.trim() };
+}
+
+function parseTranscript(transcript){
+  return String(transcript||'').split('\n').map(l=>l.trim()).filter(Boolean).map(parseTranscriptLine);
+}
+
+function transcriptSentenceTexts(transcript){
+  return parseTranscript(transcript).map(s=>s.text);
+}
+
+// Fills in any missing (null) timestamps by interpolating between the
+// nearest known ones, or spreading evenly across totalDuration if none of
+// the lines have a timestamp at all. Returns a NEW array; doesn't mutate.
+function withInterpolatedTimestamps(sentences, totalDuration){
+  const result = sentences.map(s => ({...s}));
+  const n = result.length;
+  if(n === 0) return result;
+  const anchors = [];
+  result.forEach((s,i) => { if(s.time != null) anchors.push(i); });
+
+  if(anchors.length === 0){
+    const dur = (totalDuration && totalDuration > 0) ? totalDuration : n * 3; // ~3s/line guess if duration unknown
+    for(let i=0;i<n;i++) result[i].time = (dur * i) / n;
+    return result;
+  }
+
+  if(anchors[0] > 0){
+    const firstTime = result[anchors[0]].time;
+    const span = anchors[0] + 1;
+    for(let i=0;i<anchors[0];i++) result[i].time = firstTime * (i / span);
+  }
+  for(let a=0;a<anchors.length-1;a++){
+    const startIdx = anchors[a], endIdx = anchors[a+1];
+    const startTime = result[startIdx].time, endTime = result[endIdx].time;
+    const span = endIdx - startIdx;
+    for(let i=startIdx+1;i<endIdx;i++) result[i].time = startTime + (endTime-startTime) * ((i-startIdx)/span);
+  }
+  const lastAnchor = anchors[anchors.length-1];
+  if(lastAnchor < n-1){
+    const lastTime = result[lastAnchor].time;
+    const remaining = n-1-lastAnchor;
+    const dur = (totalDuration && totalDuration > lastTime) ? totalDuration : lastTime + remaining*3;
+    for(let i=lastAnchor+1;i<n;i++) result[i].time = lastTime + (dur-lastTime) * ((i-lastAnchor)/remaining);
+  }
+  return result;
+}
+
+function findActiveSentenceIndex(sentences, t){
+  let idx = -1;
+  for(let i=0;i<sentences.length;i++){
+    if(sentences[i].time != null && sentences[i].time <= t) idx = i; else break;
+  }
+  return idx;
+}
+
+function formatTime(sec){
+  if(!isFinite(sec) || sec < 0) sec = 0;
+  const m = Math.floor(sec/60);
+  const s = Math.floor(sec%60);
+  return `${m}:${String(s).padStart(2,'0')}`;
+}
+
 function normalizeWords(s){
   return String(s ?? '').toLowerCase()
     .replace(/[^a-z0-9' ]/g,' ')
@@ -472,16 +552,17 @@ async function aiFillVocab(lessonId){
     statusEl.textContent = 'Add a transcript above first — the AI reads that to find vocabulary.';
     return;
   }
+  const cleanTranscript = transcriptSentenceTexts(lesson.transcript).join('\n');
   btn.disabled = true;
   statusEl.textContent = '✨ Thinking… reading the transcript…';
   try{
-    const items = await aiExtractVocabulary(lesson.transcript);
+    const items = await aiExtractVocabulary(cleanTranscript);
     if(items.length === 0) throw new Error('AI returned no usable words.');
     fillTextareaLines('vocab-import', items.map(v => `${v.word} | ${v.meaning} | ${v.example}`));
     statusEl.textContent = `Found ${items.length} words — review them below, then click Import vocabulary.`;
   }catch(err){
     console.error(err);
-    const fallback = fallbackVocabFromTranscript(lesson.transcript);
+    const fallback = fallbackVocabFromTranscript(cleanTranscript);
     fillTextareaLines('vocab-import', fallback.map(v => `${v.word} | ${v.meaning} | ${v.example}`));
     statusEl.textContent = `Free AI wasn't reachable, so here's a quick offline keyword scan instead (${fallback.length} words) — edit the meanings, then click Import vocabulary.`;
   }finally{
@@ -498,10 +579,11 @@ async function aiFillQuestions(lessonId){
     statusEl.textContent = 'Add a transcript above first — the AI reads that to write questions.';
     return;
   }
+  const cleanTranscript = transcriptSentenceTexts(lesson.transcript).join('\n');
   btn.disabled = true;
   statusEl.textContent = '✨ Thinking… drafting questions…';
   try{
-    const questions = await aiGenerateQuestions(lesson.transcript, lesson.title);
+    const questions = await aiGenerateQuestions(cleanTranscript, lesson.title);
     if(questions.length === 0) throw new Error('AI returned no usable questions.');
     fillTextareaLines('question-import', questions);
     statusEl.textContent = `Drafted ${questions.length} questions — review them below, then click Add questions.`;
@@ -566,9 +648,12 @@ window.addEventListener('DOMContentLoaded', () => {
 function go(hash){ location.hash = hash; }
 
 function route(){
-  renderNav();
   const hash = location.hash.replace(/^#\/?/, '');
   const parts = hash.split('/').filter(Boolean);
+  const isShadowPractice = parts[0]==='practice' && parts[1]==='shadow';
+  if(!isShadowPractice) leaveShadowPractice();
+
+  renderNav();
   const user = currentUser();
 
   if(parts.length === 0){ maybeResyncThenRerender(); return renderHome(); }
@@ -589,6 +674,16 @@ function route(){
   if(parts[0]==='admin' && parts[1]==='lesson' && parts[2]) return requireAuth('admin') && renderAdminLessonWorkspace(parts[2]);
 
   app.innerHTML = `<div class="empty-state"><h3>Page not found</h3><p>That view doesn't exist.</p></div>`;
+}
+
+// Called whenever the router navigates to anything other than the shadow
+// practice page, so a leftover polling interval or a reference to a
+// destroyed YT.Player never keeps running in the background.
+function leaveShadowPractice(){
+  stopAudioLoop();
+  ytPlayer = null;
+  pendingVideoId = null;
+  lastFollowIdx = -1;
 }
 
 function requireAuth(role){
@@ -774,11 +869,19 @@ function renderLessonDetail(id){
     </div>
     <div class="divider"></div>
     <h3>Full transcript</h3>
-    <div class="transcript-box">${escapeHtml(lesson.transcript || 'No transcript added yet.')}</div>
+    <div class="transcript-box">${lesson.transcript ? escapeHtml(transcriptSentenceTexts(lesson.transcript).join('\n')) : 'No transcript added yet.'}</div>
   `;
 }
 
 /* ---------------------------- Shadowing practice -------------------------- */
+
+/* The video stays visible — YouTube's API terms require embedded players to
+   be at least 200x200px and not hidden/obscured, so a true "audio only"
+   mode isn't something this can compliantly do. Instead the video is shown
+   small and de-emphasized next to a big "now playing" control bar, so the
+   experience reads as an audio player with the video as a small companion
+   rather than the main event — and the transcript below follows along with
+   playback in real time. */
 
 let ytPlayer = null, ytReady = false, pendingVideoId = null;
 window.onYouTubeIframeAPIReady = function(){
@@ -790,10 +893,73 @@ function createYTPlayer(videoId){
   ytPlayer = new YT.Player('yt-player-target', {
     videoId,
     playerVars:{rel:0},
+    events: { onReady: onYTPlayerReady, onStateChange: onYTPlayerStateChange },
   });
 }
 
-let currentShadowLesson = null, currentSentenceIdx = null;
+function onYTPlayerReady(){
+  const durEl = document.getElementById('audio-dur');
+  const seekEl = document.getElementById('audio-seek');
+  const duration = ytPlayer.getDuration ? ytPlayer.getDuration() : 0;
+  if(durEl) durEl.textContent = formatTime(duration);
+  if(seekEl) seekEl.max = String(Math.max(1, Math.round(duration)));
+  // Now that duration is known, fill in any timestamps the admin didn't type by hand
+  if(currentShadowLesson){
+    currentSentences = withInterpolatedTimestamps(parseTranscript(currentShadowLesson.transcript), duration);
+  }
+}
+
+function onYTPlayerStateChange(ev){
+  const btn = document.getElementById('audio-playpause');
+  const playing = ev.data === YT.PlayerState.PLAYING;
+  if(btn) btn.innerHTML = playing ? '&#10074;&#10074;' : '&#9658;';
+  if(playing){ startAudioLoop(); } else { stopAudioLoop(); }
+}
+
+let audioLoopInterval = null;
+let lastFollowIdx = -1;
+
+function startAudioLoop(){
+  stopAudioLoop();
+  audioLoopInterval = setInterval(() => {
+    if(!ytPlayer || !ytPlayer.getCurrentTime) return;
+    const t = ytPlayer.getCurrentTime();
+    const curEl = document.getElementById('audio-cur');
+    const seekEl = document.getElementById('audio-seek');
+    if(curEl) curEl.textContent = formatTime(t);
+    if(seekEl && !seekEl.__dragging) seekEl.value = String(Math.round(t));
+    const idx = findActiveSentenceIndex(currentSentences, t);
+    if(idx !== lastFollowIdx){
+      lastFollowIdx = idx;
+      document.querySelectorAll('.sentence-item.following').forEach(el=>el.classList.remove('following'));
+      if(idx >= 0){
+        const el = document.getElementById('sent-'+idx);
+        if(el){ el.classList.add('following'); el.scrollIntoView({block:'nearest', behavior:'smooth'}); }
+      }
+    }
+  }, 300);
+}
+function stopAudioLoop(){
+  if(audioLoopInterval){ clearInterval(audioLoopInterval); audioLoopInterval = null; }
+}
+
+function onAudioSeekInput(el, value){
+  el.__dragging = true;
+  const curEl = document.getElementById('audio-cur');
+  if(curEl) curEl.textContent = formatTime(Number(value));
+}
+function onAudioSeekChange(el, value){
+  el.__dragging = false;
+  if(ytPlayer && ytPlayer.seekTo) ytPlayer.seekTo(Number(value), true);
+}
+function toggleAudioPlayPause(){
+  if(!ytPlayer) return;
+  const state = ytPlayer.getPlayerState ? ytPlayer.getPlayerState() : -1;
+  if(state === YT.PlayerState.PLAYING) ytPlayer.pauseVideo();
+  else ytPlayer.playVideo();
+}
+
+let currentShadowLesson = null, currentSentenceIdx = null, currentSentences = [];
 
 function renderShadowPractice(lessonId){
   const db = loadDB();
@@ -801,7 +967,12 @@ function renderShadowPractice(lessonId){
   if(!lesson){ app.innerHTML = toast('Lesson not found.', 'error'); return; }
   currentShadowLesson = lesson;
   currentSentenceIdx = null;
-  const sentences = (lesson.transcript||'').split('\n').map(s=>s.trim()).filter(Boolean);
+  lastFollowIdx = -1;
+  stopAudioLoop();
+  // Best-effort timestamps up front (evenly spaced if none typed); onYTPlayerReady
+  // refines this once the real video duration is known.
+  currentSentences = withInterpolatedTimestamps(parseTranscript(lesson.transcript), null);
+  const sentences = currentSentences;
 
   app.innerHTML = `
     <a href="#/lesson/${lesson.id}" class="btn ghost small">&larr; ${escapeHtml(lesson.title)}</a>
@@ -809,23 +980,35 @@ function renderShadowPractice(lessonId){
     ${speechSupported() ? '' : toast('Your browser does not support speech recognition (try Chrome or Edge on desktop). You can still play sentences and read along.', 'info')}
     <div class="practice-panel">
       <div>
-        <div class="video-wrap"><div id="yt-player-target" style="width:100%;height:100%;"></div></div>
-        <div style="display:flex;gap:8px;margin-top:12px;flex-wrap:wrap;">
-          <button class="btn secondary small" onclick="ytControl('replay')">&#8634; Replay video</button>
-          <button class="btn secondary small" onclick="ytControl('slow')">&#128034; Slow (0.75x)</button>
-          <button class="btn secondary small" onclick="ytControl('normal')">Normal speed</button>
-          <button class="btn secondary small" onclick="ytControl('pause')">Pause</button>
+        <div class="audio-player">
+          <div class="video-wrap compact"><div id="yt-player-target" style="width:100%;height:100%;"></div></div>
+          <div class="audio-player-controls">
+            <p class="audio-player-title">${escapeHtml(lesson.title)}</p>
+            <div class="audio-player-row">
+              <button class="audio-playpause" id="audio-playpause" onclick="toggleAudioPlayPause()">&#9658;</button>
+              <div class="audio-seek-wrap">
+                <input type="range" id="audio-seek" min="0" max="100" value="0"
+                  oninput="onAudioSeekInput(this,this.value)" onchange="onAudioSeekChange(this,this.value)">
+                <div class="audio-time"><span id="audio-cur">0:00</span> / <span id="audio-dur">0:00</span></div>
+              </div>
+            </div>
+            <div style="display:flex;gap:8px;margin-top:12px;flex-wrap:wrap;">
+              <button class="btn secondary small" onclick="ytControl('replay')">&#8634; Replay</button>
+              <button class="btn secondary small" onclick="ytControl('slow')">&#128034; Slow (0.75x)</button>
+              <button class="btn secondary small" onclick="ytControl('normal')">Normal speed</button>
+            </div>
+          </div>
         </div>
         <div id="shadow-result" style="margin-top:16px;"></div>
       </div>
       <div class="card">
         <h3>Sentences</h3>
-        <p style="color:var(--text-dim);font-size:.85rem;margin-top:-8px;">Pick a line, listen, then press record and say it aloud.</p>
+        <p style="color:var(--text-dim);font-size:.85rem;margin-top:-8px;">Highlights as the audio plays — click a line to jump the audio there, listen, then press record and say it aloud.</p>
         ${sentences.length===0 ? `<div class="empty-state">No transcript lines yet. Ask an admin to add one.</div>` : `
         <div class="sentence-list">
           ${sentences.map((s,i)=>`
             <div class="sentence-item" id="sent-${i}" onclick="selectSentence(${i})">
-              <span class="sentence-index">${String(i+1).padStart(2,'0')}</span>${escapeHtml(s)}
+              <span class="sentence-index">${String(i+1).padStart(2,'0')}</span>${escapeHtml(s.text)}
             </div>
           `).join('')}
         </div>
@@ -852,11 +1035,14 @@ function selectSentence(i){
   const el = document.getElementById('sent-'+i);
   if(el) el.classList.add('active');
   currentSentenceIdx = i;
-  const sentences = (currentShadowLesson.transcript||'').split('\n').map(s=>s.trim()).filter(Boolean);
-  const text = sentences[i];
+  const target = currentSentences[i];
+  if(ytPlayer && ytPlayer.seekTo && target && target.time != null){
+    ytPlayer.seekTo(target.time, true);
+    ytPlayer.playVideo();
+  }
   document.getElementById('record-controls').innerHTML = `
     <div class="card" style="background:var(--surface-2);">
-      <p style="margin-top:0;"><strong>Target:</strong> ${escapeHtml(text)}</p>
+      <p style="margin-top:0;"><strong>Target:</strong> ${escapeHtml(target.text)}</p>
       <button class="btn" id="rec-btn" onclick="recordShadow(${i})" ${speechSupported() ? '' : 'disabled'}>&#127908; Record my voice</button>
     </div>
   `;
@@ -864,8 +1050,7 @@ function selectSentence(i){
 }
 
 function recordShadow(i){
-  const sentences = (currentShadowLesson.transcript||'').split('\n').map(s=>s.trim()).filter(Boolean);
-  const target = sentences[i];
+  const target = currentSentences[i].text;
   const btn = document.getElementById('rec-btn');
   btn.classList.add('recording'); btn.textContent = '● Listening…'; btn.disabled = true;
   const rec = makeRecognizer();
@@ -1076,8 +1261,8 @@ function renderAdminLessonForm(){
         <label for="desc">Short description</label>
         <input id="desc" type="text" placeholder="What learners will get out of this video">
         <label for="transcript">Transcript (one sentence per line)</label>
-        <textarea id="transcript" rows="8" placeholder="Hello, everyone.&#10;Welcome back to the channel.&#10;Today we are talking about..."></textarea>
-        <span class="field-hint">Each line becomes one shadowing sentence for learners to repeat.</span>
+        <textarea id="transcript" rows="8" placeholder="[0:00] Hello, everyone.&#10;[0:03] Welcome back to the channel.&#10;Today we are talking about..."></textarea>
+        <span class="field-hint">Each line becomes one shadowing sentence. Optionally start a line with a timestamp like <span class="badge">[0:12]</span> to sync it with the audio — lines left without one are spaced evenly between the timestamps you do add (or evenly across the whole video if you skip timestamps entirely).</span>
         <button class="btn" type="submit">Save lesson</button>
       </form>
     </div>
@@ -1141,6 +1326,7 @@ function renderAdminLessonWorkspace(lessonId){
         <input id="e-desc" type="text" value="${escapeHtml(lesson.description||'')}">
         <label>Transcript (one sentence per line)</label>
         <textarea id="e-transcript" rows="8">${escapeHtml(lesson.transcript||'')}</textarea>
+        <span class="field-hint">Optionally start a line with a timestamp like <span class="badge">[0:12]</span> to sync it with the audio during shadowing practice — lines without one are spaced evenly between the ones you do add.</span>
         <button class="btn" type="submit">Save changes</button>
       </form>
     </div>

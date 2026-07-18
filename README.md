@@ -21,9 +21,12 @@ host for free.
     questions — the admin still reviews/edits the text before importing it,
     nothing is saved automatically. See "Free AI Assist" below.
 - **Learners** sign up, browse lessons, and practice:
-  - **Shadowing** — pick a transcript line, play/replay/slow the video, then
-    record themselves and see a % match score against the target sentence
-    (via the browser's built-in speech recognition).
+  - **Shadowing** — a compact "now playing" style player (small video,
+    play/pause, seek bar, speed control) with the transcript next to it
+    highlighting and auto-scrolling in sync with the audio; click any line
+    to jump the audio there, then record yourself and see a % match score
+    against the target sentence (via the browser's built-in speech
+    recognition). See "Shadowing sync" below.
   - **Vocabulary** — flip-card review and multiple-choice quiz generated from
     the lesson's word list.
   - **Speaking** — answer open questions about the video by recording an
@@ -32,6 +35,42 @@ host for free.
   browser's `localStorage` — nothing is sent to a server.
 
 Default admin login: **admin / admin123** (change this — see Security notes).
+
+## Shadowing sync (transcript follows the audio)
+
+The Shadowing practice page is built like a podcast player: a small video
+window (see below for why it isn't hidden entirely), play/pause, a seek bar
+with current time / duration, and speed controls — with the transcript
+taking up the main visual space next to it, highlighting the current line
+and auto-scrolling as the audio plays. Clicking any line jumps playback
+there and opens the record panel for that sentence.
+
+**Why the video isn't fully hidden:** YouTube's API Services Terms require
+embedded players to stay at least 200×200 px and forbid hiding or obscuring
+them — so a true "audio-only" mode would violate YouTube's terms and risk
+losing embed access. Instead, the video is shown small (200px tall) next to
+the player controls, so the experience reads as an audio player with a small
+video companion rather than the video being the main focus.
+
+**Timestamps (optional, for accurate sync):** by default, transcript lines
+are spread evenly across the video's duration, which is a rough
+approximation — real speech isn't evenly paced. For better sync, start any
+line with a timestamp like `[0:12]` (or `[1:05:12]` for videos over an
+hour):
+
+```
+[0:00] Hello, everyone.
+[0:03] Welcome back to the channel.
+Today we are talking about something exciting.
+[0:11] Let's get started.
+```
+
+Lines without a timestamp (like "Today we are talking about...") get one
+interpolated between the nearest timestamps that *are* given — so you don't
+have to timestamp every single line, just a few anchor points throughout
+(e.g. one every 3–5 lines) for noticeably better sync than none at all. If
+you skip timestamps entirely, the lines are just spread evenly across the
+whole video's duration.
 
 ## Free AI Assist (vocabulary + questions)
 
