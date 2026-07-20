@@ -361,74 +361,74 @@
       "example": "Many people have misconceptions about what they should do to sleep well."
     },
     {
-      "id": "estn1jua4bv4",
-      "lessonId": "hu9kwookfw3s",
-      "word": "remembrance of things past",
-      "meaning": "the title of a novel, translated from another language",
-      "example": "“Remembrance of Things Past” is the English meaning of “À la recherche du temps perdu.”"
+      "id": "tvetkkp85mu9",
+      "lessonId": "v64f45asmq69",
+      "word": "bikes",
+      "meaning": "bicycles (often called “bikes”)",
+      "example": "Sales of bikes are up this year in Britain."
     },
     {
-      "id": "2nuvle6m4bv4",
-      "lessonId": "hu9kwookfw3s",
-      "word": "translated into English",
-      "meaning": "changed from one language into English",
-      "example": "The book was translated into English so more people could read it."
+      "id": "yxq5qotu5mu9",
+      "lessonId": "v64f45asmq69",
+      "word": "accessible",
+      "meaning": "easy to reach, use, or understand; available to more people",
+      "example": "Electric bikes are making cycling accessible to more people."
     },
     {
-      "id": "nv4dfn3t4bv5",
-      "lessonId": "hu9kwookfw3s",
-      "word": "natural",
-      "meaning": "connected to birth or nature; not forced",
-      "example": "It doesn’t feel natural to me to read for hours late at night."
+      "id": "2xut5t2z5mu9",
+      "lessonId": "v64f45asmq69",
+      "word": "cycle network",
+      "meaning": "a system of roads or paths made for cyclists",
+      "example": "The Netherlands’ cycle network spreads over 95,000 miles."
     },
     {
-      "id": "yymoki6v4bv5",
-      "lessonId": "hu9kwookfw3s",
-      "word": "evolutionary timescale",
-      "meaning": "a very long period of time measured in evolution",
-      "example": "On an evolutionary timescale, humans have not had much time to develop reading skills."
+      "id": "f3g2h63c5mu9",
+      "lessonId": "v64f45asmq69",
+      "word": "deeply ingrained",
+      "meaning": "firmly established in a person or culture and unlikely to change",
+      "example": "The bicycle is deeply ingrained into Dutch culture."
     },
     {
-      "id": "2we2du0v4bv5",
-      "lessonId": "hu9kwookfw3s",
-      "word": "dedicated",
-      "meaning": "designed and used for one particular purpose",
-      "example": "The study suggests we don’t have a dedicated reading brain part."
+      "id": "5u219r745mu9",
+      "lessonId": "v64f45asmq69",
+      "word": "took off",
+      "meaning": "suddenly became popular or successful",
+      "example": "Bike manufacturing took off in the Netherlands during the 1890s."
     },
     {
-      "id": "2w2i6h4j4bv5",
-      "lessonId": "hu9kwookfw3s",
-      "word": "co-opt",
-      "meaning": "to use something for a new purpose, often in a way that was not originally intended",
-      "example": "When we learn to read, our brains co-opt areas that were used for other skills."
+      "id": "7ivbv1zo5mu9",
+      "lessonId": "v64f45asmq69",
+      "word": "milestone",
+      "meaning": "an important stage or event in the development of something",
+      "example": "This was a really important milestone for cycling in the Netherlands."
     },
     {
-      "id": "yt4y7mha4bv5",
-      "lessonId": "hu9kwookfw3s",
-      "word": "activation",
-      "meaning": "the process of becoming active (especially in the brain during a task)",
-      "example": "Brain scans showed activation in all four lobes of the cortex when participants read."
+      "id": "eevuqm7p5mu9",
+      "lessonId": "v64f45asmq69",
+      "word": "quality of life",
+      "meaning": "how enjoyable, comfortable, and healthy life is in a place",
+      "example": "Cycling is seen as part of the quality of life solution."
     },
     {
-      "id": "j58pmpwn4bv5",
-      "lessonId": "hu9kwookfw3s",
-      "word": "cortex",
-      "meaning": "the outer layer of the brain involved in many complex functions",
-      "example": "Reading involves activation in different areas of the cortex."
+      "id": "tb2mw6t25mu9",
+      "lessonId": "v64f45asmq69",
+      "word": "liveability",
+      "meaning": "the degree to which somewhere is pleasant to live in",
+      "example": "Gulf cities are also interested in liveability."
     },
     {
-      "id": "42w6bv7r4bv5",
-      "lessonId": "hu9kwookfw3s",
-      "word": "circuit",
-      "meaning": "a system of connections within the brain",
-      "example": "Learning to read Chinese can shape the brain’s circuit for visual processing."
+      "id": "onu4t6h35mu9",
+      "lessonId": "v64f45asmq69",
+      "word": "copy and paste",
+      "meaning": "an exact copy of something moved and put somewhere else",
+      "example": "Dubai is studying what works, not doing a copy and paste of the Netherlands."
     },
     {
-      "id": "dev9j92x4bv5",
-      "lessonId": "hu9kwookfw3s",
-      "word": "intricate symbols/characters",
-      "meaning": "very detailed, complex marks or letters",
-      "example": "Chinese characters are intricate symbols that require strong visual processing."
+      "id": "6oelb9q25mu9",
+      "lessonId": "v64f45asmq69",
+      "word": "principles",
+      "meaning": "basic ideas or rules that guide decisions and actions",
+      "example": "The key is that we’re looking for the principles, not copying everything."
     }
   ],
   "questions": [
@@ -543,5 +543,5 @@
       "text": "Do you think the “speed of life” and technology (like phones and the internet) can affect sleep—what evidence or reasoning from the video supports your opinion?"
     }
   ],
-  "updatedAt": 1784523337746
+  "updatedAt": 1784523398627
 }
