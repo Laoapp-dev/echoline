@@ -359,6 +359,76 @@
       "word": "misconceptions",
       "meaning": "wrong beliefs or misunderstandings",
       "example": "Many people have misconceptions about what they should do to sleep well."
+    },
+    {
+      "id": "estn1jua4bv4",
+      "lessonId": "hu9kwookfw3s",
+      "word": "remembrance of things past",
+      "meaning": "the title of a novel, translated from another language",
+      "example": "“Remembrance of Things Past” is the English meaning of “À la recherche du temps perdu.”"
+    },
+    {
+      "id": "2nuvle6m4bv4",
+      "lessonId": "hu9kwookfw3s",
+      "word": "translated into English",
+      "meaning": "changed from one language into English",
+      "example": "The book was translated into English so more people could read it."
+    },
+    {
+      "id": "nv4dfn3t4bv5",
+      "lessonId": "hu9kwookfw3s",
+      "word": "natural",
+      "meaning": "connected to birth or nature; not forced",
+      "example": "It doesn’t feel natural to me to read for hours late at night."
+    },
+    {
+      "id": "yymoki6v4bv5",
+      "lessonId": "hu9kwookfw3s",
+      "word": "evolutionary timescale",
+      "meaning": "a very long period of time measured in evolution",
+      "example": "On an evolutionary timescale, humans have not had much time to develop reading skills."
+    },
+    {
+      "id": "2we2du0v4bv5",
+      "lessonId": "hu9kwookfw3s",
+      "word": "dedicated",
+      "meaning": "designed and used for one particular purpose",
+      "example": "The study suggests we don’t have a dedicated reading brain part."
+    },
+    {
+      "id": "2w2i6h4j4bv5",
+      "lessonId": "hu9kwookfw3s",
+      "word": "co-opt",
+      "meaning": "to use something for a new purpose, often in a way that was not originally intended",
+      "example": "When we learn to read, our brains co-opt areas that were used for other skills."
+    },
+    {
+      "id": "yt4y7mha4bv5",
+      "lessonId": "hu9kwookfw3s",
+      "word": "activation",
+      "meaning": "the process of becoming active (especially in the brain during a task)",
+      "example": "Brain scans showed activation in all four lobes of the cortex when participants read."
+    },
+    {
+      "id": "j58pmpwn4bv5",
+      "lessonId": "hu9kwookfw3s",
+      "word": "cortex",
+      "meaning": "the outer layer of the brain involved in many complex functions",
+      "example": "Reading involves activation in different areas of the cortex."
+    },
+    {
+      "id": "42w6bv7r4bv5",
+      "lessonId": "hu9kwookfw3s",
+      "word": "circuit",
+      "meaning": "a system of connections within the brain",
+      "example": "Learning to read Chinese can shape the brain’s circuit for visual processing."
+    },
+    {
+      "id": "dev9j92x4bv5",
+      "lessonId": "hu9kwookfw3s",
+      "word": "intricate symbols/characters",
+      "meaning": "very detailed, complex marks or letters",
+      "example": "Chinese characters are intricate symbols that require strong visual processing."
     }
   ],
   "questions": [
@@ -473,5 +543,5 @@
       "text": "Do you think the “speed of life” and technology (like phones and the internet) can affect sleep—what evidence or reasoning from the video supports your opinion?"
     }
   ],
-  "updatedAt": 1784523149299
+  "updatedAt": 1784523337746
 }
