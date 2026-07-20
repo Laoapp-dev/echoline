@@ -257,6 +257,76 @@
       "word": "native speaker",
       "meaning": "a person who speaks a language as their first language",
       "example": "It’s not necessary to have a native accent."
+    },
+    {
+      "id": "oiwxev4j5qtc",
+      "lessonId": "dnoc5dzx3614",
+      "word": "tossing, turning",
+      "meaning": "to move around in bed and have difficulty getting comfortable or sleeping",
+      "example": "I spent hours tossing and turning before I finally fell asleep."
+    },
+    {
+      "id": "kemyflie5qtc",
+      "lessonId": "dnoc5dzx3614",
+      "word": "at two in the morning",
+      "meaning": "very late at night, around 2 a.m. (a specific time)",
+      "example": "I woke up at two in the morning and couldn’t sleep again."
+    },
+    {
+      "id": "q82xudid5qtc",
+      "lessonId": "dnoc5dzx3614",
+      "word": "struggle to get back to sleep",
+      "meaning": "to have difficulty falling asleep again after waking up",
+      "example": "If you wake up suddenly, you may struggle to get back to sleep."
+    },
+    {
+      "id": "8wbjn4v75qtc",
+      "lessonId": "dnoc5dzx3614",
+      "word": "insufficient or irregular sleep",
+      "meaning": "not enough sleep and/or sleep at different times that aren’t consistent",
+      "example": "Insufficient or irregular sleep can make you feel tired during the day."
+    },
+    {
+      "id": "rlgf5cqc5qtc",
+      "lessonId": "dnoc5dzx3614",
+      "word": "circadian rhythms",
+      "meaning": "natural body cycles that repeat about every 24 hours and affect sleep and alertness",
+      "example": "Your circadian rhythms influence when you feel sleepy or awake."
+    },
+    {
+      "id": "cun8fpji5qtc",
+      "lessonId": "dnoc5dzx3614",
+      "word": "internal representation of a day",
+      "meaning": "a built-in body “model” of time that helps organize daily functions",
+      "example": "The body uses an internal representation of a day to regulate many processes."
+    },
+    {
+      "id": "n5xtc2ph5qtc",
+      "lessonId": "dnoc5dzx3614",
+      "word": "optimal amount of sleep",
+      "meaning": "the best quantity of sleep for health and well-being",
+      "example": "Doctors say the optimal amount of sleep can vary from person to person."
+    },
+    {
+      "id": "5zwzcsmu5qtc",
+      "lessonId": "dnoc5dzx3614",
+      "word": "one size does not fit all",
+      "meaning": "what works for one person may not work for another",
+      "example": "One size does not fit all—some people need more sleep than others."
+    },
+    {
+      "id": "8v6o6hxj5qtc",
+      "lessonId": "dnoc5dzx3614",
+      "word": "healthy range",
+      "meaning": "a safe or recommended interval (for example, hours of sleep)",
+      "example": "The healthy range for sleep is different for each person."
+    },
+    {
+      "id": "t5cfxaia5qtc",
+      "lessonId": "dnoc5dzx3614",
+      "word": "misconceptions",
+      "meaning": "wrong beliefs or misunderstandings",
+      "example": "Many people have misconceptions about what they should do to sleep well."
     }
   ],
   "questions": [
@@ -346,5 +416,5 @@
       "text": "How is the “ESOL Entry 3 or B1 level” described in the transcript, and what can you infer about what a learner can do at that level?"
     }
   ],
-  "updatedAt": 1784521603914
+  "updatedAt": 1784521724161
 }
